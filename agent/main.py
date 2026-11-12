@@ -14,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent import changes, config
+from agent.careless import careless_answer
 from agent.contracts import ActionProposal, Grant
 from agent.execution.executor import Executor
 from agent.investigation.investigator import Context, investigate
@@ -26,6 +27,8 @@ from agent.verification.verifier import verify
 
 AUDIT_FILE = changes.DATA / "audit.jsonl"
 HISTORY_FILE = changes.DATA / "history.json"
+TRAFFIC_FILE = changes.DATA / "traffic_stats.json"
+SCOREBOARD_FILE = changes.DATA / "scoreboard.json"
 
 monitor = Monitor()
 known_good = changes.KnownGood()
@@ -45,6 +48,8 @@ STATE = {
     "security_events": [],  # blocked attacks and quarantined log lines, newest first
     "deploy_window": False,
     "shadow": {"available": None, "last": None},
+    "traffic": None,        # fake-customer stats, if traffic/traffic.py is running
+    "comparison": None,     # careless agent vs ShadowRun-Ops
     "last_unhealthy_at": 0,
 }
 HIDDEN = {"quiet_until", "last_unhealthy_at"}
@@ -97,6 +102,29 @@ def security_event(kind, detail, data=None):
     audit("security_event", ev)
 
 
+def read_traffic():
+    try:
+        t = json.loads(TRAFFIC_FILE.read_text())
+    except Exception:
+        return None
+    t["live"] = time.time() - t.get("updated", 0) < 6
+    return t
+
+
+def impact_for(inc):
+    """Customer impact of an incident, from the fake-customer outage episodes."""
+    t = read_traffic()
+    if not t:
+        return None
+    start = inc["started"] - 60
+    episodes = ([t["current_outage"]] if t.get("current_outage") else []) + t.get("outages", [])
+    for ep in episodes:
+        if (ep.get("ended") or time.time()) >= start and ep["started"] <= time.time():
+            return {"failed_checkouts": ep["failed"], "lost_paise": ep["lost_paise"],
+                    "outage_seconds": round((ep.get("ended") or time.time()) - ep["started"], 1)}
+    return {"failed_checkouts": 0, "lost_paise": 0, "outage_seconds": 0}
+
+
 def effective_changes():
     """Recent human changes that are still running (not already rolled back), latest per service + kind."""
     latest = {}
@@ -117,6 +145,13 @@ async def step(inc, stage, status, detail, data=None):
     inc["steps"].append({"time": now_str(), "stage": stage, "status": status, "detail": detail, "data": data})
     audit("step", {"incident": inc["id"], "stage": stage, "status": status, "detail": detail, "data": data})
     await broadcast()
+
+
+def read_impact_safely(inc):
+    try:
+        return impact_for(inc)
+    except Exception:
+        return None
 
 
 def ask_llm(system, user):
@@ -158,7 +193,14 @@ async def handle_incident(event, snap):
         await step(inc, "planned", "done", f"Proposed {proposal.operation} on {proposal.target}", inc["proposal"])
 
         await step(inc, "simulation", "running", "Rehearsing the fix on the shadow copy: reproduce first, then fix")
-        sim = await asyncio.to_thread(simulator.simulate, proposal)
+        loop = asyncio.get_running_loop()
+        inc["sim_live"] = []
+
+        def on_sim_step(s):
+            inc["sim_live"].append(s)
+            asyncio.run_coroutine_threadsafe(broadcast(), loop)
+
+        sim = await asyncio.to_thread(simulator.simulate, proposal, on_sim_step)
         proposal.parameters["simulation"] = sim
         inc["proposal"] = proposal.model_dump(mode="json")
         inc["simulation"] = sim
@@ -229,8 +271,11 @@ async def handle_incident(event, snap):
         inc["status"] = "error"
         await step(inc, "error", "failed", f"Agent error: {e}")
     finally:
+        inc["ended"] = time.time()
+        await asyncio.sleep(1.5)  # let the fake customers notice the recovery before we read the impact
+        inc["impact"] = read_impact_safely(inc)
         audit("incident_closed", {"incident": inc["id"], "status": inc["status"],
-                                  "recovery_seconds": inc["recovery_seconds"]})
+                                  "recovery_seconds": inc["recovery_seconds"], "impact": inc["impact"]})
         STATE["history"].insert(0, inc)
         STATE["history"] = STATE["history"][:20]
         save_history()
@@ -248,6 +293,7 @@ async def watch_loop():
             if not monitor.is_healthy(snap):
                 STATE["last_unhealthy_at"] = time.time()
             STATE["deploy_window"] = changes.in_deploy_window()
+            STATE["traffic"] = read_traffic()
             if tick % 5 == 0:
                 STATE["changes"] = list(reversed(changes.all_changes()[-8:]))
                 if STATE["active"] is None:
@@ -334,6 +380,39 @@ async def rogue_action():
                    {"policy": decision.model_dump(mode="json"), "forged_grant": exec_result})
     await broadcast()
     return {"verdict": decision.verdict, "reasons": decision.reasons, "forged_grant": exec_result["detail"]}
+
+
+@app.post("/compare/careless")
+async def compare_careless():
+    """Ask a careless agent (raw logs, no sanitizer, no policy) what it WOULD run. Never executes it."""
+    poisoned = next((h for h in ([STATE["active"]] if STATE["active"] else []) + STATE["history"]
+                     if h and h.get("diagnosis") and h["diagnosis"].get("suspicious_log_lines")), None)
+    if not poisoned:
+        return {"ok": False, "detail": "Run the poisoned_log scenario first."}
+    raw = [line.split("] ", 1)[-1] for line in poisoned["diagnosis"]["suspicious_log_lines"]]
+    raw = ["ERROR database connection failed host=demo-db:5432 reason=connection refused"] * 3 + raw
+    answer = await asyncio.to_thread(careless_answer, raw, chat_json)
+    STATE["comparison"] = {
+        "incident": poisoned["id"], "time": now_str(), "careless": answer,
+        "shadowrun": {
+            "quarantined": len(poisoned["diagnosis"]["suspicious_log_lines"]),
+            "root_cause": (poisoned["diagnosis"].get("root_cause") or {}).get("id"),
+            "action": (f"{poisoned['proposal']['operation']} {poisoned['proposal']['target']}"
+                       if poisoned.get("proposal") else None),
+            "status": poisoned["status"],
+        },
+    }
+    audit("careless_comparison", STATE["comparison"])
+    await broadcast()
+    return {"ok": True, **STATE["comparison"]}
+
+
+@app.get("/scoreboard")
+def scoreboard():
+    try:
+        return json.loads(SCOREBOARD_FILE.read_text())
+    except Exception:
+        return {"available": False}
 
 
 @app.websocket("/ws")

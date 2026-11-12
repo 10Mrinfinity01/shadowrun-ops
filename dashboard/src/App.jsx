@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import { Comparison, ImpactBanner, Scoreboard, ServiceMap, rs } from './Phase3.jsx'
 
 // Laptop A: works with no settings. Laptop B: put VITE_BACKEND_URL=http://<Laptop A IP>:8000 in dashboard/.env.local
 const BACKEND = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:8000`
@@ -132,6 +133,7 @@ function OneMinuteCard({ inc }) {
           <dt>Practice run</dt><dd><PracticeRun inc={inc} /></dd></>)}
         {dec && (<><dt>Policy</dt><dd><span className={`pill v-${dec.verdict}`}>{dec.verdict}</span> {dec.reasons.join('; ')}</dd></>)}
         {inc.recovery_seconds != null && (<><dt>Recovered in</dt><dd>{inc.recovery_seconds}s</dd></>)}
+        {inc.impact && (<><dt>Customer impact</dt><dd>{inc.impact.failed_checkouts} failed checkouts · {rs(inc.impact.lost_paise)} lost · outage {inc.impact.outage_seconds}s</dd></>)}
       </dl>
       {waiting && p && (
         <div className="row gap">
@@ -179,6 +181,10 @@ export default function App() {
         </button>
       </header>
 
+      <ImpactBanner state={state} />
+
+      <ServiceMap state={state} />
+
       <section className="grid">
         {ORDER.map((n) => (
           <ServiceCard key={n} name={n} s={state?.services?.[n]}
@@ -200,24 +206,30 @@ export default function App() {
         <p className="muted">No incidents yet. All quiet.</p>
       )}
 
+      <Comparison state={state} post={post} />
+
       <section className="two-col">
         <div className="card"><h3>Recent changes (ledger)</h3><Changes items={state?.changes} /></div>
         <div className="card"><h3>Security events</h3><SecurityEvents items={state?.security_events} /></div>
       </section>
 
+      <Scoreboard backend={BACKEND} />
+
       {state?.history?.length > 0 && (
         <section className="card">
           <h3>History</h3>
           <table>
-            <thead><tr><th>Incident</th><th>Root cause</th><th>Action</th><th>Status</th><th>Recovery</th></tr></thead>
+            <thead><tr><th>Incident</th><th>Root cause</th><th>Action</th><th>Practice run</th><th>Status</th><th>Recovery</th><th>Lost</th></tr></thead>
             <tbody>
               {state.history.map((h) => (
                 <tr key={h.id}>
                   <td>{h.id}</td>
                   <td>{h.diagnosis?.root_cause?.id ?? '—'}</td>
                   <td>{h.proposal ? `${h.proposal.operation} ${h.proposal.target}` : '—'}</td>
+                  <td>{h.simulation?.status?.replace('_', ' ') ?? '—'}</td>
                   <td>{h.status}</td>
                   <td>{h.recovery_seconds != null ? `${h.recovery_seconds}s` : '—'}</td>
+                  <td>{h.impact ? rs(h.impact.lost_paise) : '—'}</td>
                 </tr>
               ))}
             </tbody>

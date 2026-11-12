@@ -15,8 +15,8 @@ PROVIDERS = {
 }
 
 
-def provider_order():
-    first = os.getenv("LLM_PROVIDER", "groq")
+def provider_order(prefer=None):
+    first = prefer or os.getenv("LLM_PROVIDER", "groq")
     return [first] + [p for p in PROVIDERS if p != first]
 
 
@@ -33,11 +33,11 @@ def extract_json(text):
         return None
 
 
-def chat_json(system, user, max_tokens=1500, timeout=25):
+def chat_json(system, user, max_tokens=1500, timeout=8, prefer=None):
     from openai import OpenAI  # imported here so the rest of the agent works without it in tests
 
     errors = []
-    for name in provider_order():
+    for name in provider_order(prefer):
         cfg = PROVIDERS[name]
         model = os.getenv(cfg["model"])
         key = os.getenv(cfg["key"]) if cfg["key"] else "ollama"

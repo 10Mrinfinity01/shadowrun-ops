@@ -115,12 +115,19 @@ class ShadowSimulator:
         log("restore", "done", "shadow copy put back to its known-good state")
 
     # ---- the simulation ---------------------------------------------------------------------
-    def simulate(self, proposal):
+    def simulate(self, proposal, on_step=None):
         started = time.time()
         steps = []
 
         def log(stage, status, detail):
-            steps.append({"stage": stage, "status": status, "detail": detail})
+            step = {"stage": stage, "status": status, "detail": detail}
+            if status != "running":  # "running" steps are progress updates for the live view only
+                steps.append(step)
+            if on_step:
+                try:
+                    on_step(step)  # lets the dashboard show the rehearsal live
+                except Exception:
+                    pass
 
         def result(status, reproduced=False, fixed=False):
             return {"status": status, "reproduced": reproduced, "fixed": fixed, "steps": steps,
@@ -147,6 +154,7 @@ class ShadowSimulator:
             log("baseline", "ok", "shadow checkout works before the test")
 
             # 2. reproduce the fault in the copy
+            log("reproduce", "running", f"putting the same fault into {twin}")
             if op == "start_container":
                 self._stop(twin)
                 what = f"stopped {twin}"
@@ -166,6 +174,7 @@ class ShadowSimulator:
             log("reproduce", "red", f"{what} -> shadow checkout FAILS too ({detail}), fault reproduced in {took}s")
 
             # 3. apply the proposed fix to the copy
+            log("apply", "running", f"applying {op} to {twin}")
             if op == "start_container":
                 self._start(twin)
                 applied = f"started {twin}"
