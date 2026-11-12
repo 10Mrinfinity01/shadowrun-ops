@@ -1,0 +1,31 @@
+# ShadowRun-Ops safety policy.
+# The AI cannot read-modify this file and cannot override it. Only humans edit it.
+
+version: 1
+
+allowed_actions:
+  start_container:
+    targets: [demo-db, shop-cart, shop-payment, shop-storefront]
+  restart_container:
+    targets: [shop-cart, shop-payment, shop-storefront, demo-db]
+    approval_targets: [demo-db]   # restarting the database interrupts everyone: ask a human
+
+# Never allowed, whatever the AI says.
+denied_actions:
+  - delete_container
+  - remove_volume
+  - exec_command
+  - drop_database
+  - stop_container
+  - change_policy
+
+# The agent's own safety plumbing is off limits.
+protected_targets: [docker-proxy-read, docker-proxy-exec]
+
+rules:
+  min_confidence_for_auto: 0.7      # below this, a human must approve
+  max_attempts_per_incident: 2
+  cooldown_seconds_per_target: 60   # no repeated restarts of the same thing
+  grant_ttl_seconds: 60             # a signed permission expires quickly
+  approval_timeout_seconds: 120     # no answer means no
+  require_simulation: false         # Phase 2 turns this on

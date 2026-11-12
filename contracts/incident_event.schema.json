@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "Signal": {
+      "properties": {
+        "type": {
+          "enum": [
+            "health_check",
+            "container_state",
+            "customer_probe"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "failed"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "target",
+        "result"
+      ],
+      "title": "Signal",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "detected_at": {
+      "title": "Detected At",
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "affected_services": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Affected Services",
+      "type": "array"
+    },
+    "signals": {
+      "items": {
+        "$ref": "#/$defs/Signal"
+      },
+      "title": "Signals",
+      "type": "array"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "incident_id",
+    "detected_at",
+    "severity",
+    "affected_services",
+    "signals"
+  ],
+  "title": "IncidentEvent",
+  "type": "object"
+}

@@ -1,0 +1,76 @@
+{
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "operation": {
+      "title": "Operation",
+      "type": "string"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "parameters": {
+      "additionalProperties": true,
+      "title": "Parameters",
+      "type": "object"
+    },
+    "expected_outcome": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Expected Outcome",
+      "type": "array"
+    },
+    "verify_services": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Verify Services",
+      "type": "array"
+    },
+    "reversible": {
+      "title": "Reversible",
+      "type": "boolean"
+    },
+    "rollback": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rollback"
+    },
+    "simulation_required": {
+      "default": false,
+      "title": "Simulation Required",
+      "type": "boolean"
+    },
+    "diagnosis_confidence": {
+      "title": "Diagnosis Confidence",
+      "type": "number"
+    }
+  },
+  "required": [
+    "action_id",
+    "incident_id",
+    "operation",
+    "target",
+    "expected_outcome",
+    "verify_services",
+    "reversible",
+    "diagnosis_confidence"
+  ],
+  "title": "ActionProposal",
+  "type": "object"
+}

@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "Grant": {
+      "properties": {
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "expires_at": {
+          "title": "Expires At",
+          "type": "number"
+        },
+        "signature": {
+          "title": "Signature",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "operation",
+        "target",
+        "expires_at",
+        "signature"
+      ],
+      "title": "Grant",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "ALLOW",
+        "APPROVAL_REQUIRED",
+        "BLOCK"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "reasons": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "grant": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Grant"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "decision_id",
+    "action_id",
+    "verdict",
+    "reasons"
+  ],
+  "title": "PolicyDecision",
+  "type": "object"
+}

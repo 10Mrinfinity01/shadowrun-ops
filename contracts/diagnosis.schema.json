@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "Hypothesis": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "container_down",
+            "service_unhealthy"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "service": {
+          "title": "Service",
+          "type": "string"
+        },
+        "container": {
+          "title": "Container",
+          "type": "string"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "supporting": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Supporting",
+          "type": "array"
+        },
+        "contradicting": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Contradicting",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "service",
+        "container",
+        "score"
+      ],
+      "title": "Hypothesis",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "root_cause": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Hypothesis"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "alternatives": {
+      "items": {
+        "$ref": "#/$defs/Hypothesis"
+      },
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "confidence": {
+      "title": "Confidence",
+      "type": "number"
+    },
+    "explanation": {
+      "title": "Explanation",
+      "type": "string"
+    },
+    "symptoms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Symptoms",
+      "type": "array"
+    },
+    "suspicious_log_lines": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Suspicious Log Lines",
+      "type": "array"
+    },
+    "llm_provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Llm Provider"
+    },
+    "llm_agreed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Llm Agreed"
+    }
+  },
+  "required": [
+    "incident_id",
+    "root_cause",
+    "confidence",
+    "explanation"
+  ],
+  "title": "Diagnosis",
+  "type": "object"
+}

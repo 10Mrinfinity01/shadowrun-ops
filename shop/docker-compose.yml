@@ -1,0 +1,68 @@
+name: quickcart
+
+# QuickCart: the demo shop that ShadowRun-Ops watches and repairs.
+# All data is synthetic. The DB password below is a throwaway demo value.
+
+services:
+  demo-db:
+    image: postgres:16
+    container_name: demo-db
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop_demo_only
+      POSTGRES_DB: shop
+    volumes:
+      - shopdata:/var/lib/postgresql/data
+
+  cart:
+    build: ./services
+    container_name: shop-cart
+    command: uvicorn cart:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql://shop:shop_demo_only@demo-db:5432/shop
+    ports: ["8081:8000"]
+    depends_on: [demo-db]
+
+  payment:
+    build: ./services
+    container_name: shop-payment
+    command: uvicorn payment:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql://shop:shop_demo_only@demo-db:5432/shop
+    ports: ["8082:8000"]
+    depends_on: [demo-db]
+
+  storefront:
+    build: ./services
+    container_name: shop-storefront
+    command: uvicorn storefront:app --host 0.0.0.0 --port 8000
+    environment:
+      CART_URL: http://cart:8000
+      PAYMENT_URL: http://payment:8000
+    ports: ["8080:8000"]
+    depends_on: [cart, payment]
+
+  # Read-only window into Docker for Monitoring: can list containers and read logs, cannot change anything.
+  docker-proxy-read:
+    image: tecnativa/docker-socket-proxy
+    container_name: docker-proxy-read
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports: ["127.0.0.1:2375:2375"]
+
+  # Write access for the Execution engine only. The engine itself also enforces an allowlist in code.
+  docker-proxy-exec:
+    image: tecnativa/docker-socket-proxy
+    container_name: docker-proxy-exec
+    environment:
+      CONTAINERS: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports: ["127.0.0.1:2376:2375"]
+
+volumes:
+  shopdata:
