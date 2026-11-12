@@ -6,10 +6,25 @@
           "title": "Id",
           "type": "string"
         },
+        "change_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Id"
+        },
         "kind": {
           "enum": [
             "container_down",
-            "service_unhealthy"
+            "service_unhealthy",
+            "oom_killed",
+            "bad_deploy",
+            "bad_config"
           ],
           "title": "Kind",
           "type": "string"

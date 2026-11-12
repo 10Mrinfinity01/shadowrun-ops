@@ -26,7 +26,11 @@ def call(method, url, **kw):
         raise HTTPException(502, f"upstream unreachable: {url}")
     if r.status_code >= 400:
         log("ERROR", f"{method} {url} returned {r.status_code}: {r.text[:150]}")
-        raise HTTPException(r.status_code, r.json().get("detail", "upstream error"))
+        try:
+            detail = r.json().get("detail", "upstream error")
+        except Exception:
+            detail = "upstream error"
+        raise HTTPException(r.status_code, detail)
     return r.json()
 
 
@@ -37,7 +41,7 @@ def health():
     deps = {}
     for name, url in (("cart", CART), ("payment", PAYMENT)):
         try:
-            deps[name] = httpx.get(f"{url}/health", timeout=2).status_code
+            deps[name] = httpx.get(f"{url}/health", timeout=0.8).status_code
         except Exception:
             deps[name] = "unreachable"
     return {"service": "storefront", "status": "ok", "dependencies": deps}
@@ -51,6 +55,11 @@ def products():
 @app.post("/api/cart/add")
 def add(a: Add):
     return call("POST", f"{CART}/cart/{a.user_id}/add", json={"product_id": a.product_id, "qty": a.qty})
+
+
+@app.get("/api/search")
+def search(q: str = ""):
+    return call("GET", f"{CART}/products/search", params={"q": q})
 
 
 @app.get("/api/cart/{user_id}")

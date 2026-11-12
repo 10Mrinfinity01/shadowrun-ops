@@ -13,18 +13,21 @@ from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from agent import config
+from agent import changes, config
+from agent.contracts import ActionProposal, Grant
 from agent.execution.executor import Executor
-from agent.investigation.investigator import investigate
+from agent.investigation.investigator import Context, investigate
 from agent.llm import chat_json
 from agent.monitoring.monitor import Monitor
 from agent.planner.planner import plan
 from agent.safety.engine import SafetyEngine
 from agent.verification.verifier import verify
 
-AUDIT_FILE = pathlib.Path("data/audit.jsonl")
+AUDIT_FILE = changes.DATA / "audit.jsonl"
+HISTORY_FILE = changes.DATA / "history.json"
 
 monitor = Monitor()
+known_good = changes.KnownGood()
 safety = SafetyEngine(config.GRANT_SECRET)
 executor = Executor(config.GRANT_SECRET, safety.policy)
 
@@ -36,7 +39,12 @@ STATE = {
     "kill_switch": False,
     "quiet_until": 0,
     "llm_enabled": True,
+    "changes": [],          # recent change-ledger entries, newest first
+    "security_events": [],  # blocked attacks and quarantined log lines, newest first
+    "deploy_window": False,
+    "last_unhealthy_at": 0,
 }
+HIDDEN = {"quiet_until", "last_unhealthy_at"}
 CLIENTS: set[WebSocket] = set()
 APPROVALS: dict[str, asyncio.Future] = {}
 
@@ -61,7 +69,45 @@ async def broadcast():
 
 
 def public_state():
-    return {k: v for k, v in STATE.items() if k != "quiet_until"}
+    return {k: v for k, v in STATE.items() if k not in HIDDEN}
+
+
+def save_history():
+    try:
+        HISTORY_FILE.parent.mkdir(exist_ok=True)
+        HISTORY_FILE.write_text(json.dumps(STATE["history"], default=str))
+    except Exception as e:
+        print("could not save history:", e)
+
+
+def load_history():
+    try:
+        STATE["history"] = json.loads(HISTORY_FILE.read_text())[:20]
+    except Exception:
+        STATE["history"] = []
+
+
+def security_event(kind, detail, data=None):
+    ev = {"time": now_str(), "kind": kind, "detail": detail, "data": data}
+    STATE["security_events"].insert(0, ev)
+    STATE["security_events"] = STATE["security_events"][:20]
+    audit("security_event", ev)
+
+
+def effective_changes():
+    """Recent human changes that are still running (not already rolled back), latest per service + kind."""
+    latest = {}
+    for c in changes.recent_changes():
+        latest[(c["service"], c["kind"])] = c
+    return [c for c in latest.values() if changes.read_runtime(c["service"], c["kind"]) == c["after"]]
+
+
+def errors_since(container, since):
+    return sum(1 for line in monitor.logs(container, lines=300, since=since) if " ERROR " in f" {line} ")
+
+
+def build_context():
+    return Context(read_logs=monitor.logs, errors_since=errors_since, recent_changes=effective_changes())
 
 
 async def step(inc, stage, status, detail, data=None):
@@ -87,13 +133,20 @@ async def handle_incident(event, snap):
                    event.model_dump(mode="json"))
 
         await step(inc, "investigating", "running", "Reading health checks, container state and sanitized logs")
-        diagnosis = await asyncio.to_thread(investigate, event, snap, monitor.logs, ask_llm)
+        ctx = await asyncio.to_thread(build_context)
+        diagnosis = await asyncio.to_thread(investigate, event, snap, ctx, ask_llm)
         inc["diagnosis"] = diagnosis.model_dump(mode="json")
         cause = diagnosis.root_cause.id if diagnosis.root_cause else "unknown"
         await step(inc, "diagnosed", "done", f"Root cause: {cause} (confidence {diagnosis.confidence:.2f})",
                    inc["diagnosis"])
+        if diagnosis.suspicious_log_lines:
+            security_event("poisoned_log", f"{len(diagnosis.suspicious_log_lines)} log line(s) tried to give the "
+                           "AI instructions. Quarantined: the LLM never saw them.", diagnosis.suspicious_log_lines)
+            await step(inc, "security", "quarantined",
+                       f"{len(diagnosis.suspicious_log_lines)} suspicious log line(s) quarantined and ignored",
+                       diagnosis.suspicious_log_lines)
 
-        proposal = plan(diagnosis)
+        proposal = plan(diagnosis, known_good)
         if proposal is None:
             inc["status"] = "escalated"
             await step(inc, "escalated", "done", "No safe action in the catalogue for this cause. Waking a human.")
@@ -169,18 +222,28 @@ async def handle_incident(event, snap):
                                   "recovery_seconds": inc["recovery_seconds"]})
         STATE["history"].insert(0, inc)
         STATE["history"] = STATE["history"][:20]
+        save_history()
         STATE["active"] = None
         STATE["quiet_until"] = time.time() + config.QUIET_SECONDS_AFTER_INCIDENT
         await broadcast()
 
 
 async def watch_loop():
+    tick = 0
     while True:
         try:
             snap = await asyncio.to_thread(monitor.snapshot)
             STATE["services"], STATE["probe"] = snap["services"], snap["probe"]
+            if not monitor.is_healthy(snap):
+                STATE["last_unhealthy_at"] = time.time()
+            STATE["deploy_window"] = changes.in_deploy_window()
+            if tick % 5 == 0:
+                STATE["changes"] = list(reversed(changes.all_changes()[-8:]))
+                for c in known_good.promote_stable(STATE["last_unhealthy_at"]):
+                    audit("known_good_promoted", c)
+            tick += 1
             if STATE["active"] is None and time.time() >= STATE["quiet_until"]:
-                event = monitor.check_for_incident(snap)
+                event = monitor.check_for_incident(snap, in_deploy_window=STATE["deploy_window"])
                 if event:
                     asyncio.create_task(handle_incident(event, snap))
             await broadcast()
@@ -191,6 +254,8 @@ async def watch_loop():
 
 @asynccontextmanager
 async def lifespan(app):
+    load_history()
+    known_good.promoted.update(c["id"] for c in changes.all_changes())  # only judge changes made from now on
     task = asyncio.create_task(watch_loop())
     yield
     task.cancel()
@@ -234,6 +299,27 @@ async def kill_switch(on: bool):
     audit("kill_switch", {"on": on})
     await broadcast()
     return {"kill_switch": on}
+
+
+@app.post("/simulate/rogue-action")
+async def rogue_action():
+    """A compromised component tries to make the agent destroy data. Shows the safety boundary holding."""
+    rogue = ActionProposal(action_id="ACT-ROGUE", incident_id="SECURITY-TEST", operation="drop_database",
+                           target="demo-db", parameters={"database": "shop"}, expected_outcome=["(attacker goal)"],
+                           verify_services=[], reversible=False, diagnosis_confidence=0.99)
+    decision = safety.decide(rogue)
+    forged = ActionProposal(action_id="ACT-FORGED", incident_id="SECURITY-TEST", operation="restart_container",
+                            target="demo-db", expected_outcome=["(attacker goal)"], verify_services=[],
+                            reversible=True, diagnosis_confidence=0.99)
+    fake_decision = decision.model_copy(update={"verdict": "ALLOW", "grant": Grant(
+        action_id="ACT-FORGED", operation="restart_container", target="demo-db",
+        expires_at=time.time() + 60, signature="forged-by-attacker")})
+    exec_result = executor.execute(forged, fake_decision)
+    security_event("rogue_action", f"Request to {rogue.operation} {rogue.target}: {decision.verdict}. "
+                   f"Forged permission to restart demo-db: {exec_result['detail']}.",
+                   {"policy": decision.model_dump(mode="json"), "forged_grant": exec_result})
+    await broadcast()
+    return {"verdict": decision.verdict, "reasons": decision.reasons, "forged_grant": exec_result["detail"]}
 
 
 @app.websocket("/ws")

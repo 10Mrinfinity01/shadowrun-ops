@@ -2,11 +2,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from common import connect, db_ok, init_schema_in_background, log
+from common import Db, load_runtime, log
 
+RELEASE, CONFIG = load_runtime("cart")
+db = Db(CONFIG)
 app = FastAPI(title="cart")
 
-init_schema_in_background([
+db.init_schema_in_background([
     """CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY, name TEXT NOT NULL, price_paise INT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS cart_items (
@@ -18,6 +20,8 @@ init_schema_in_background([
        WHERE NOT EXISTS (SELECT 1 FROM products)""",
 ])
 
+_report_cache = []  # BUG (on purpose, for the memory-overload scenario): reports are kept forever
+
 
 class AddItem(BaseModel):
     product_id: int
@@ -26,15 +30,16 @@ class AddItem(BaseModel):
 
 @app.get("/health")
 def health():
-    ok, reason = db_ok()
-    body = {"service": "cart", "status": "ok" if ok else "fail", "checks": {"database": reason}}
+    ok, reason = db.ok()
+    body = {"service": "cart", "status": "ok" if ok else "fail", "version": RELEASE["version"],
+            "checks": {"database": reason}}
     return JSONResponse(body, status_code=200 if ok else 503)
 
 
 @app.get("/products")
 def products():
     try:
-        with connect() as conn:
+        with db.connect() as conn:
             rows = conn.execute("SELECT id, name, price_paise FROM products ORDER BY id").fetchall()
         return [{"id": r[0], "name": r[1], "price_paise": r[2]} for r in rows]
     except Exception as e:
@@ -42,10 +47,30 @@ def products():
         raise HTTPException(503, "database unavailable")
 
 
+@app.get("/products/search")
+def search(q: str = ""):
+    log("INFO", f"product search q={q[:300]}")  # customer text lands in the logs, as in many real apps
+    try:
+        with db.connect() as conn:
+            rows = conn.execute("SELECT id, name, price_paise FROM products WHERE name ILIKE %s",
+                                (f"%{q}%",)).fetchall()
+        return [{"id": r[0], "name": r[1], "price_paise": r[2]} for r in rows]
+    except Exception as e:
+        log("ERROR", f"GET /products/search failed: {e}")
+        raise HTTPException(503, "database unavailable")
+
+
+@app.post("/admin/export-report")
+def export_report():
+    _report_cache.append(b"x" * 25_000_000)  # 25 MB that is never freed
+    log("INFO", f"report exported; cached reports={len(_report_cache)}")
+    return {"ok": True, "cached_reports": len(_report_cache)}
+
+
 @app.post("/cart/{user_id}/add")
 def add(user_id: str, item: AddItem):
     try:
-        with connect() as conn:
+        with db.connect() as conn:
             conn.execute(
                 """INSERT INTO cart_items (user_id, product_id, qty) VALUES (%s, %s, %s)
                    ON CONFLICT (user_id, product_id) DO UPDATE SET qty = cart_items.qty + EXCLUDED.qty""",
@@ -60,7 +85,7 @@ def add(user_id: str, item: AddItem):
 @app.get("/cart/{user_id}")
 def get_cart(user_id: str):
     try:
-        with connect() as conn:
+        with db.connect() as conn:
             rows = conn.execute(
                 """SELECT p.id, p.name, p.price_paise, c.qty FROM cart_items c
                    JOIN products p ON p.id = c.product_id WHERE c.user_id = %s ORDER BY p.id""",

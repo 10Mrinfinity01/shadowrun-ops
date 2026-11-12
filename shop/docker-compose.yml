@@ -2,6 +2,14 @@ name: quickcart
 
 # QuickCart: the demo shop that ShadowRun-Ops watches and repairs.
 # All data is synthetic. The DB password below is a throwaway demo value.
+# ../data/runtime holds each service's release + config files. Only shop/deploy.py
+# (the team's deploy tool) and the agent's Execution engine write there.
+
+x-service: &service
+  build: ./services
+  volumes:
+    - ../data/runtime:/runtime:ro
+  depends_on: [demo-db]
 
 services:
   demo-db:
@@ -15,25 +23,21 @@ services:
       - shopdata:/var/lib/postgresql/data
 
   cart:
-    build: ./services
+    <<: *service
     container_name: shop-cart
     command: uvicorn cart:app --host 0.0.0.0 --port 8000
-    environment:
-      DATABASE_URL: postgresql://shop:shop_demo_only@demo-db:5432/shop
     ports: ["8081:8000"]
-    depends_on: [demo-db]
+    mem_limit: 300m
+    memswap_limit: 300m   # no swap, so a memory leak ends in an OOM kill instead of slowness
 
   payment:
-    build: ./services
+    <<: *service
     container_name: shop-payment
     command: uvicorn payment:app --host 0.0.0.0 --port 8000
-    environment:
-      DATABASE_URL: postgresql://shop:shop_demo_only@demo-db:5432/shop
     ports: ["8082:8000"]
-    depends_on: [demo-db]
 
   storefront:
-    build: ./services
+    <<: *service
     container_name: shop-storefront
     command: uvicorn storefront:app --host 0.0.0.0 --port 8000
     environment:

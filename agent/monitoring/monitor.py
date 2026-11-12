@@ -20,16 +20,36 @@ class Monitor:
         return self._docker
 
     def container_states(self):
+        """container -> {"status", "oom_killed", "exit_code"}"""
         try:
-            found = {c.name: c.status for c in self._client().containers.list(all=True)}
+            found = {c.name: c for c in self._client().containers.list(all=True)}
         except Exception as e:
             self._docker = None
-            return {svc["container"]: f"unknown ({str(e)[:60]})" for svc in config.SERVICES.values()}
-        return {svc["container"]: found.get(svc["container"], "missing") for svc in config.SERVICES.values()}
+            return {svc["container"]: {"status": f"unknown ({str(e)[:60]})", "oom_killed": False, "exit_code": None}
+                    for svc in config.SERVICES.values()}
+        out = {}
+        for svc in config.SERVICES.values():
+            c = found.get(svc["container"])
+            if c is None:
+                out[svc["container"]] = {"status": "missing", "oom_killed": False, "exit_code": None}
+                continue
+            info = {"status": c.status, "oom_killed": False, "exit_code": None}
+            if c.status != "running":
+                try:  # the list call has no exit details; inspect only the stopped ones
+                    state = self._client().containers.get(c.name).attrs.get("State", {})
+                    info["oom_killed"] = bool(state.get("OOMKilled"))
+                    info["exit_code"] = state.get("ExitCode")
+                except Exception:
+                    pass
+            out[svc["container"]] = info
+        return out
 
-    def logs(self, container, lines=30):
+    def logs(self, container, lines=30, since=None):
         try:
-            raw = self._client().containers.get(container).logs(tail=lines)
+            kw = {"tail": lines}
+            if since:
+                kw["since"] = int(since)
+            raw = self._client().containers.get(container).logs(**kw)
             return raw.decode("utf-8", "replace").splitlines()
         except Exception as e:
             return [f"(could not read logs: {str(e)[:80]})"]
@@ -48,7 +68,8 @@ class Monitor:
         states = self.container_states()
         services = {}
         for name, svc in config.SERVICES.items():
-            status = states.get(svc["container"], "missing")
+            cs = states.get(svc["container"], {"status": "missing", "oom_killed": False, "exit_code": None})
+            status = cs["status"]
             if svc["health"] and status == "running":
                 ok, detail = self._http("GET", svc["health"])
                 health = "ok" if ok else "failed"
@@ -57,7 +78,12 @@ class Monitor:
             else:  # the database has no HTTP endpoint: running means healthy at this level
                 health = "ok" if status == "running" else "failed"
                 detail = f"container is {status}"
+            if cs["oom_killed"]:
+                detail = f"container is {status}: OOM-killed (out of memory, exit code {cs['exit_code']})"
+            elif status != "running" and cs["exit_code"] is not None:
+                detail = f"container is {status} (exit code {cs['exit_code']})"
             services[name] = {"container": svc["container"], "container_status": status,
+                              "oom_killed": cs["oom_killed"], "exit_code": cs["exit_code"],
                               "health": health, "detail": detail}
         probe_ok, probe_detail = self._http("POST", config.CUSTOMER_PROBE_URL)
         return {"time": time.time(), "services": services,
@@ -85,8 +111,12 @@ class Monitor:
                           result=snap["probe"]["result"], detail=snap["probe"]["detail"]))
         return out
 
-    def check_for_incident(self, snap):
-        """Returns an IncidentEvent after BAD_POLLS_BEFORE_INCIDENT bad polls in a row, else None."""
+    def check_for_incident(self, snap, in_deploy_window=False):
+        """Returns an IncidentEvent after BAD_POLLS_BEFORE_INCIDENT bad polls in a row, else None.
+        Stays quiet during a deploy window (a deploy restarts containers on purpose)."""
+        if in_deploy_window:
+            self.bad_streak = 0
+            return None
         bad = self.bad_services(snap)
         if not bad and snap["probe"]["result"] == "ok":
             self.bad_streak = 0

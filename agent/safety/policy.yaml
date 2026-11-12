@@ -9,6 +9,10 @@ allowed_actions:
   restart_container:
     targets: [shop-cart, shop-payment, shop-storefront, demo-db]
     approval_targets: [demo-db]   # restarting the database interrupts everyone: ask a human
+  rollback_release:               # put back the last known-good release, then restart
+    targets: [shop-cart, shop-payment, shop-storefront]
+  restore_config:                 # put back the last known-good config, then restart
+    targets: [shop-cart, shop-payment, shop-storefront]
 
 # Never allowed, whatever the AI says.
 denied_actions:

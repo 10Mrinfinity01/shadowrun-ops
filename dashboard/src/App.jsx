@@ -32,17 +32,65 @@ function useBackendState() {
 
 const post = (path) => fetch(BACKEND + path, { method: 'POST' }).then((r) => r.json())
 
+function versionOf(detail) {
+  const m = /"version":"([^"]+)"/.exec(detail || '')
+  return m ? m[1] : null
+}
+
 function ServiceCard({ name, s, rootCause }) {
   const ok = s?.health === 'ok'
+  const version = versionOf(s?.detail)
   return (
     <div className={`card service ${ok ? 'ok' : 'bad'} ${rootCause ? 'root' : ''}`}>
       <div className="row">
         <strong>{name}</strong>
+        {version && <span className="pill">v{version}</span>}
+        {s?.oom_killed && <span className="pill v-BLOCK">OOM</span>}
         {rootCause && <span className="pill root-pill">root cause</span>}
       </div>
       <div className="muted">{s?.container} · {s?.container_status ?? '…'}</div>
       <div className="detail">{s ? s.detail : 'waiting for data'}</div>
     </div>
+  )
+}
+
+function Changes({ items }) {
+  if (!items?.length) return <p className="muted">No changes recorded yet.</p>
+  return (
+    <table>
+      <thead><tr><th>When</th><th>Who</th><th>Service</th><th>Change</th></tr></thead>
+      <tbody>
+        {items.map((c) => {
+          const what = c.kind === 'release'
+            ? `release ${c.before?.version} → ${c.after?.version}`
+            : 'config ' + Object.keys(c.after || {}).filter((k) => c.before?.[k] !== c.after[k])
+              .map((k) => `${k}: ${c.before?.[k]} → ${c.after[k]}`).join(', ')
+          return (
+            <tr key={c.id} className={c.is_rollback ? 'rollback-row' : ''}>
+              <td>{new Date(c.time * 1000).toLocaleTimeString()}</td>
+              <td>{c.actor}{c.is_rollback && <span className="pill v-ALLOW">auto-rollback</span>}</td>
+              <td>{c.service}</td>
+              <td>{what}</td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+function SecurityEvents({ items }) {
+  if (!items?.length) return <p className="muted">No attacks seen.</p>
+  return (
+    <ul className="security">
+      {items.map((e, i) => (
+        <li key={i}>
+          <span className="muted">{e.time}</span> <span className="pill v-BLOCK">{e.kind.replace('_', ' ')}</span>
+          <div className="detail">{e.detail}</div>
+          {e.kind === 'poisoned_log' && e.data?.map((l, j) => <code key={j} className="quarantined">{l}</code>)}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -55,6 +103,10 @@ function OneMinuteCard({ inc }) {
       <dl>
         <dt>What broke</dt><dd>{inc.event?.affected_services?.join(', ')}</dd>
         {d && (<><dt>Why</dt><dd>{d.explanation} <span className="muted">(confidence {d.confidence}{d.llm_provider ? `, reviewed by ${d.llm_provider}` : ''})</span></dd></>)}
+        {d?.root_cause?.supporting?.length > 0 && (<><dt>Evidence</dt><dd><ul className="evidence">
+          {d.root_cause.supporting.map((e, i) => <li key={i}>{e}</li>)}</ul></dd></>)}
+        {d?.suspicious_log_lines?.length > 0 && (<><dt>Quarantined</dt><dd>
+          {d.suspicious_log_lines.map((l, i) => <code key={i} className="quarantined">{l}</code>)}</dd></>)}
         {p && (<><dt>Fix</dt><dd>{p.operation} → <code>{p.target}</code></dd>
           <dt>Undo plan</dt><dd>{p.rollback}</dd></>)}
         {dec && (<><dt>Policy</dt><dd><span className={`pill v-${dec.verdict}`}>{dec.verdict}</span> {dec.reasons.join('; ')}</dd></>)}
@@ -95,6 +147,7 @@ export default function App() {
         <h1>ShadowRun-Ops</h1>
         <span className="muted">Practice first. Then real.</span>
         <span className={`pill ${connected ? 'v-ALLOW' : 'v-BLOCK'}`}>{connected ? 'agent connected' : 'agent offline'}</span>
+        {state?.deploy_window && <span className="pill v-running">deploy in progress: monitoring paused</span>}
         <button
           className={state?.kill_switch ? 'deny' : ''}
           onClick={() => post(`/kill-switch/${!state?.kill_switch}`)}
@@ -123,6 +176,11 @@ export default function App() {
       ) : (
         <p className="muted">No incidents yet. All quiet.</p>
       )}
+
+      <section className="two-col">
+        <div className="card"><h3>Recent changes (ledger)</h3><Changes items={state?.changes} /></div>
+        <div className="card"><h3>Security events</h3><SecurityEvents items={state?.security_events} /></div>
+      </section>
 
       {state?.history?.length > 0 && (
         <section className="card">

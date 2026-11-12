@@ -27,8 +27,9 @@ class IncidentEvent(BaseModel):
 
 
 class Hypothesis(BaseModel):
-    id: str  # e.g. "container_down:database"
-    kind: Literal["container_down", "service_unhealthy"]
+    id: str  # e.g. "container_down:database", "bad_deploy:payment"
+    change_id: Optional[str] = None  # ledger entry this hypothesis blames, if any
+    kind: Literal["container_down", "service_unhealthy", "oom_killed", "bad_deploy", "bad_config"]
     service: str
     container: str
     score: float
