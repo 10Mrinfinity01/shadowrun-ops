@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+httpx
+openai
+python-dotenv
+pydantic
+pyyaml
+docker
+psycopg[binary]
+redis
+python-telegram-bot
+websockets
