@@ -1,0 +1,49 @@
+name: quickcart-shadow
+
+# The SHADOW copy of QuickCart: same images, separate network, separate synthetic database,
+# separate release/config files (../data/shadow-runtime). The agent rehearses every fix here
+# before it is allowed to touch the real shop. Ports are bound to this laptop only.
+
+x-service: &service
+  build: ./services
+  volumes:
+    - ../data/shadow-runtime:/runtime:ro
+  depends_on: [demo-db]
+
+services:
+  demo-db:                     # same service name as the live shop, so configs work unchanged inside this network
+    image: postgres:16
+    container_name: shadow-db
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop_demo_only
+      POSTGRES_DB: shop
+    volumes:
+      - shadowdata:/var/lib/postgresql/data
+
+  cart:
+    <<: *service
+    container_name: shadow-cart
+    command: uvicorn cart:app --host 0.0.0.0 --port 8000
+    ports: ["127.0.0.1:9081:8000"]
+    mem_limit: 300m
+    memswap_limit: 300m
+
+  payment:
+    <<: *service
+    container_name: shadow-payment
+    command: uvicorn payment:app --host 0.0.0.0 --port 8000
+    ports: ["127.0.0.1:9082:8000"]
+
+  storefront:
+    <<: *service
+    container_name: shadow-storefront
+    command: uvicorn storefront:app --host 0.0.0.0 --port 8000
+    environment:
+      CART_URL: http://cart:8000
+      PAYMENT_URL: http://payment:8000
+    ports: ["127.0.0.1:8090:8000"]
+    depends_on: [cart, payment]
+
+volumes:
+  shadowdata:

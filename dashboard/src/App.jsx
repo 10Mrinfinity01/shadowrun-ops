@@ -94,6 +94,26 @@ function SecurityEvents({ items }) {
   )
 }
 
+const SIM_PILL = { passed: 'v-ALLOW', failed: 'v-BLOCK', not_reproducible: 'v-APPROVAL_REQUIRED', error: 'v-BLOCK' }
+
+function PracticeRun({ inc }) {
+  const sim = inc.simulation
+  const rehearsing = !sim && inc.steps?.some((s) => s.stage === 'simulation' && s.status === 'running')
+  if (rehearsing) return <span className="pill v-running">rehearsing on the shadow copy…</span>
+  if (!sim) return null
+  return (
+    <div>
+      <span className={`pill ${SIM_PILL[sim.status] || ''}`}>{sim.status.replace('_', ' ')}</span>
+      <span className="muted"> in {sim.duration_s}s</span>
+      <ol className="sim">
+        {sim.steps.filter((s) => s.stage !== 'restore').map((s, i) => (
+          <li key={i} className={`sim-${s.status.replace(' ', '-')}`}><strong>{s.stage}</strong> {s.detail}</li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 function OneMinuteCard({ inc }) {
   const d = inc.diagnosis, p = inc.proposal, dec = inc.decision
   const waiting = inc.status === 'awaiting_approval'
@@ -108,7 +128,8 @@ function OneMinuteCard({ inc }) {
         {d?.suspicious_log_lines?.length > 0 && (<><dt>Quarantined</dt><dd>
           {d.suspicious_log_lines.map((l, i) => <code key={i} className="quarantined">{l}</code>)}</dd></>)}
         {p && (<><dt>Fix</dt><dd>{p.operation} → <code>{p.target}</code></dd>
-          <dt>Undo plan</dt><dd>{p.rollback}</dd></>)}
+          <dt>Undo plan</dt><dd>{p.rollback}</dd>
+          <dt>Practice run</dt><dd><PracticeRun inc={inc} /></dd></>)}
         {dec && (<><dt>Policy</dt><dd><span className={`pill v-${dec.verdict}`}>{dec.verdict}</span> {dec.reasons.join('; ')}</dd></>)}
         {inc.recovery_seconds != null && (<><dt>Recovered in</dt><dd>{inc.recovery_seconds}s</dd></>)}
       </dl>
@@ -148,6 +169,8 @@ export default function App() {
         <span className="muted">Practice first. Then real.</span>
         <span className={`pill ${connected ? 'v-ALLOW' : 'v-BLOCK'}`}>{connected ? 'agent connected' : 'agent offline'}</span>
         {state?.deploy_window && <span className="pill v-running">deploy in progress: monitoring paused</span>}
+        {state?.shadow?.available === true && <span className="pill v-skipped">shadow copy ready</span>}
+        {state?.shadow?.available === false && <span className="pill v-BLOCK">shadow copy offline</span>}
         <button
           className={state?.kill_switch ? 'deny' : ''}
           onClick={() => post(`/kill-switch/${!state?.kill_switch}`)}

@@ -21,6 +21,7 @@ from agent.llm import chat_json
 from agent.monitoring.monitor import Monitor
 from agent.planner.planner import plan
 from agent.safety.engine import SafetyEngine
+from agent.shadow.simulator import ShadowSimulator
 from agent.verification.verifier import verify
 
 AUDIT_FILE = changes.DATA / "audit.jsonl"
@@ -30,6 +31,7 @@ monitor = Monitor()
 known_good = changes.KnownGood()
 safety = SafetyEngine(config.GRANT_SECRET)
 executor = Executor(config.GRANT_SECRET, safety.policy)
+simulator = ShadowSimulator()
 
 STATE = {
     "services": {},
@@ -42,6 +44,7 @@ STATE = {
     "changes": [],          # recent change-ledger entries, newest first
     "security_events": [],  # blocked attacks and quarantined log lines, newest first
     "deploy_window": False,
+    "shadow": {"available": None, "last": None},
     "last_unhealthy_at": 0,
 }
 HIDDEN = {"quiet_until", "last_unhealthy_at"}
@@ -154,7 +157,15 @@ async def handle_incident(event, snap):
         inc["proposal"] = proposal.model_dump(mode="json")
         await step(inc, "planned", "done", f"Proposed {proposal.operation} on {proposal.target}", inc["proposal"])
 
-        await step(inc, "simulation", "skipped", "Shadow simulation arrives in Phase 2")
+        await step(inc, "simulation", "running", "Rehearsing the fix on the shadow copy: reproduce first, then fix")
+        sim = await asyncio.to_thread(simulator.simulate, proposal)
+        proposal.parameters["simulation"] = sim
+        inc["proposal"] = proposal.model_dump(mode="json")
+        inc["simulation"] = sim
+        STATE["shadow"]["last"] = {"incident": inc["id"], "status": sim["status"], "duration_s": sim["duration_s"]}
+        label = {"passed": "passed", "failed": "failed", "not_reproducible": "not reproducible"}.get(sim["status"], "error")
+        summary = " | ".join(f"{s['stage']}: {s['detail']}" for s in sim["steps"] if s["stage"] != "restore")
+        await step(inc, "simulation", label, f"{summary} ({sim['duration_s']}s)", sim)
 
         decision = safety.decide(proposal, kill_switch=STATE["kill_switch"])
         inc["decision"] = decision.model_dump(mode="json")
@@ -239,6 +250,9 @@ async def watch_loop():
             STATE["deploy_window"] = changes.in_deploy_window()
             if tick % 5 == 0:
                 STATE["changes"] = list(reversed(changes.all_changes()[-8:]))
+                if STATE["active"] is None:
+                    ok, _ = await asyncio.to_thread(monitor._http, "GET", "http://localhost:8090/health")
+                    STATE["shadow"]["available"] = ok
                 for c in known_good.promote_stable(STATE["last_unhealthy_at"]):
                     audit("known_good_promoted", c)
             tick += 1

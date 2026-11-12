@@ -16,6 +16,13 @@ from agent.sanitizer.sanitizer import sanitize_logs
 SECRET = "test-secret"
 
 
+def rehearsed(p, status="passed"):
+    """Phase 2b: every fix must pass a shadow rehearsal before Safety allows it."""
+    if p is not None:
+        p.parameters["simulation"] = {"status": status}
+    return p
+
+
 def snap(db="running", cart="ok", payment="ok", storefront="ok", probe="ok", cart_container="running"):
     def svc(container, status, health, detail="HTTP 200"):
         return {"container": container, "container_status": status, "health": health, "detail": detail}
@@ -129,7 +136,7 @@ class Planning(unittest.TestCase):
 
 class Safety(unittest.TestCase):
     def proposal(self, s=DB_DOWN):
-        return plan(investigate(event_for(s), s, no_logs))
+        return rehearsed(plan(investigate(event_for(s), s, no_logs)))
 
     def test_allow_and_signed(self):
         eng = SafetyEngine(SECRET)
@@ -176,7 +183,7 @@ class Safety(unittest.TestCase):
 class Grants(unittest.TestCase):
     def test_tamper_and_expiry_refused(self):
         eng = SafetyEngine(SECRET)
-        p = plan(investigate(event_for(DB_DOWN), DB_DOWN, no_logs))
+        p = rehearsed(plan(investigate(event_for(DB_DOWN), DB_DOWN, no_logs)))
         d = eng.decide(p)
         p.target = "shop-cart"
         self.assertFalse(verify_grant(SECRET, d.grant, p)[0])
@@ -186,7 +193,7 @@ class Grants(unittest.TestCase):
 
     def test_executor_refuses_bad_grant_before_touching_docker(self):
         eng = SafetyEngine(SECRET)
-        p = plan(investigate(event_for(DB_DOWN), DB_DOWN, no_logs))
+        p = rehearsed(plan(investigate(event_for(DB_DOWN), DB_DOWN, no_logs)))
         d = eng.decide(p)
         d.grant.signature = "forged"
         r = Executor(SECRET, eng.policy).execute(p, d)

@@ -35,3 +35,7 @@ code { background: #f6f8fa; padding: 1px 6px; border-radius: 6px; }
 .security { list-style: none; padding: 0; margin: 0; }
 .security li { padding: 8px 0; border-bottom: 1px solid #eaeef2; font-size: 14px; }
 .rollback-row td { background: #f0fff4; }
+.sim { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.sim li { margin: 3px 0; }
+.sim-red strong, .sim-failed strong, .sim-not-reproduced strong { color: #cf222e; }
+.sim-green strong, .sim-ok strong, .sim-done strong { color: #1a7f37; }

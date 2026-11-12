@@ -32,4 +32,4 @@ rules:
   cooldown_seconds_per_target: 60   # no repeated restarts of the same thing
   grant_ttl_seconds: 60             # a signed permission expires quickly
   approval_timeout_seconds: 120     # no answer means no
-  require_simulation: false         # Phase 2 turns this on
+  require_simulation: true          # fix must work in the shadow copy first (failed -> BLOCK, can't reproduce -> ask a human)

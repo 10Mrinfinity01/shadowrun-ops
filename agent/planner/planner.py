@@ -46,6 +46,6 @@ def plan(diagnosis, known_good=None):
         verify_services=verify,
         reversible=True,
         rollback=rollback,
-        simulation_required=False,  # Phase 2b: shadow simulation
+        simulation_required=True,   # every fix is rehearsed in the shadow copy first
         diagnosis_confidence=diagnosis.confidence,
     )

@@ -88,11 +88,21 @@ class SafetyEngine:
         if last and now - last < rules["cooldown_seconds_per_target"]:
             wait = int(rules["cooldown_seconds_per_target"] - (now - last))
             return self._make(proposal, "BLOCK", [f"cooldown: {proposal.target} was changed recently, wait {wait}s"], now)
-        if rules.get("require_simulation") and not proposal.parameters.get("simulation_passed"):
-            return self._make(proposal, "BLOCK", ["simulation required but not passed"], now)
+        sim = proposal.parameters.get("simulation") or {}
+        sim_status = sim.get("status")
+        if rules.get("require_simulation") and sim_status == "failed":
+            return self._make(proposal, "BLOCK", ["the fix did NOT work in the shadow copy: refusing to try it on "
+                                                  "the real shop"], now)
 
         reasons = [f"'{proposal.operation}' on '{proposal.target}' is allowed by policy"]
         needs_human = []
+        if rules.get("require_simulation"):
+            if sim_status == "passed":
+                reasons.append("rehearsed in the shadow copy: fault reproduced, fix worked")
+            elif sim_status == "not_reproducible":
+                needs_human.append("the fault could not be reproduced in the shadow copy, so the rehearsal proves nothing")
+            else:
+                needs_human.append("no successful shadow rehearsal (" + (sim_status or "not run") + ")")
         if proposal.target in allowed.get("approval_targets", []):
             needs_human.append(f"policy requires human approval for {proposal.operation} on {proposal.target}")
         if proposal.diagnosis_confidence < rules["min_confidence_for_auto"]:

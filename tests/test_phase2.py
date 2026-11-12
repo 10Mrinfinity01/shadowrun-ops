@@ -13,7 +13,7 @@ from agent.investigation.investigator import Context, investigate, rank_hypothes
 from agent.monitoring.monitor import Monitor
 from agent.planner.planner import plan
 from agent.safety.engine import SafetyEngine
-from tests.test_phase1 import DB_DOWN, event_for, snap
+from tests.test_phase1 import DB_DOWN, event_for, rehearsed, snap
 
 SECRET = "test-secret"
 
@@ -119,7 +119,7 @@ class Rollback(TempData):
     def bad_deploy_proposal(self):
         changes.write_runtime("payment", "release", {"version": "2.3"})
         ctx = Context(read_logs=lambda c: [], errors_since=lambda c, t: 4, recent_changes=[change()])
-        return plan(investigate(event_for(BAD_DEPLOY), BAD_DEPLOY, ctx), changes.KnownGood())
+        return rehearsed(plan(investigate(event_for(BAD_DEPLOY), BAD_DEPLOY, ctx), changes.KnownGood()))
 
     def test_plan_uses_known_good(self):
         p = self.bad_deploy_proposal()
