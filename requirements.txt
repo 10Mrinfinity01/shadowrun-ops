@@ -10,3 +10,5 @@ psycopg[binary]
 redis
 python-telegram-bot
 websockets
+langgraph
+langchain-core
