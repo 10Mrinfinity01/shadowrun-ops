@@ -28,7 +28,7 @@ Check "Shadow copy http://localhost:8090" (Http "http://localhost:8090/health") 
 Check "Agent       http://localhost:8000" (Http "http://localhost:8000/health") "start the AGENT window"
 Check "Dashboard   http://localhost:5173" (Http "http://localhost:5173") "start the DASHBOARD window (npm run dev -- --host)"
 Check "QuickCart   http://localhost:3000" (Http "http://localhost:3000") "start the QUICKCART window (cd quickcart; npm install; npm run dev)"
-Check "Judge app   http://localhost:7070" (Http "http://localhost:7070") "start the JUDGE INJECTOR window"
+Check "Ghost app   http://localhost:7070" (Http "http://localhost:7070") "start the GHOST INJECTOR window"
 $mode = ""
 try { $mode = (Invoke-RestMethod -Uri "http://localhost:8000/state" -TimeoutSec 3).approval_mode } catch {}
 $pol = Get-Content agent\safety\policy.yaml -Raw
@@ -47,10 +47,17 @@ try { Resolve-DnsName api.groq.com -ErrorAction Stop | Out-Null; $net = $true } 
 Check "Internet for Groq/Gemini" $net "check the hotspot's mobile data (the demo still works via Ollama)"
 
 $envText = if (Test-Path .env) { Get-Content .env -Raw } else { "" }
+$lg = & .\venv\Scripts\python.exe -c "import langgraph; print('yes')" 2>$null
+Check "LangGraph installed in the venv" ($lg -match "yes") ".\venv\Scripts\python.exe -m pip install langgraph langchain-core"
+$agentInfo = $null
+try { $agentInfo = Invoke-RestMethod -Uri "http://localhost:8000/agent" -TimeoutSec 3 } catch {}
+$lgRun = & .\venv\Scripts\python.exe tools\check_langgraph.py 2>&1 | Out-String
+Check "Agent graph works on real LangGraph" ($lgRun -match "LANGGRAPH OK") "run: .\venv\Scripts\python.exe tools\check_langgraph.py"
+Check "Agent is running on LangGraph" ($agentInfo -and $agentInfo.engine -eq "LangGraph") "restart the AGENT window after installing langgraph"
 Check "GRANT_SECRET set in .env" ($envText -match "GRANT_SECRET=\S{16,}") "add a long random GRANT_SECRET to .env"
 Check "Policy threshold is 0.7" ((Get-Content agent\safety\policy.yaml -Raw) -match "min_confidence_for_auto: 0\.7\s") "run demo_reset.ps1"
 
-$tests = & .\venv\Scripts\python.exe -m unittest tests.test_phase1 tests.test_phase2 tests.test_phase2b tests.test_phase3 tests.test_phase5 tests.test_phase6 tests.test_phase7 tests.test_phase8 2>&1 | Out-String
+$tests = & .\venv\Scripts\python.exe -m unittest tests.test_phase1 tests.test_phase2 tests.test_phase2b tests.test_phase3 tests.test_phase5 tests.test_phase6 tests.test_phase7 tests.test_phase8 tests.test_phase9 tests.test_agentic 2>&1 | Out-String
 Check "All logic tests pass" ($tests -match "\nOK") "run the tests to see which one fails"
 
 Write-Host ""

@@ -15,6 +15,7 @@ const SHADOW_ORDER = ['storefront', 'cart', 'payment', 'database', 'redis']
 const COLORS = {
   ok: ['#dafbe1', '#1a7f37', '#116329'], failed: ['#ffebe9', '#cf222e', '#a40e26'],
   working: ['#fff8c5', '#bf8700', '#7d4e00'], idle: ['#f6f8fa', '#8c959f', '#57606a'],
+  warn: ['#ffedd5', '#ea580c', '#9a3412'],
 }
 
 function Node({ x, y, w = W, h = H, label, sub, status, root }) {
@@ -53,20 +54,27 @@ export function ServiceMap({ state }) {
   const services = state?.services || {}
   const inc = state?.active
   const root = inc?.diagnosis?.root_cause?.service
-  const status = (n) => (n === 'customers' ? (state?.probe?.result === 'ok' ? 'ok' : state?.probe ? 'failed' : 'idle')
-    : services[n] ? (services[n].health === 'ok' ? 'ok' : 'failed') : 'idle')
+  const obsNodes = Object.fromEntries((state?.observability?.map?.nodes || []).map((x) => [x.id, x]))
+  const status = (n) => {
+    const base = n === 'customers' ? (state?.probe?.result === 'ok' ? 'ok' : state?.probe ? 'failed' : 'idle')
+      : services[n] ? (services[n].health === 'ok' ? 'ok' : 'failed') : 'idle'
+    if (base === 'ok' && obsNodes[n]?.status === 'failed') return 'failed'  // e.g. a bad deploy: answers health checks, breaks checkout
+    return base === 'ok' && obsNodes[n]?.status === 'warn' ? 'warn' : base  // in the blast radius of a failure
+  }
   const sub = (n) => {
     if (n === 'customers') return (state?.traffic?.live ? 'fake customers' : 'checkout probe')
       + (state?.probe?.latency_ms != null ? ` · ${state.probe.latency_ms} ms` : '')
     const m = /"version":"([^"]+)"/.exec(services[n]?.detail || '')
     if (services[n]?.oom_killed) return 'OOM-killed'
-    return m ? `v${m[1]}` : services[n]?.container_status
+    const errs = obsNodes[n]?.errors_per_min ? ` · ${obsNodes[n].errors_per_min} err/min` : ''
+    if (obsNodes[n]?.status === 'warn' && services[n]?.health === 'ok') return 'affected (blast radius)'
+    return (m ? `v${m[1]}` : services[n]?.container_status ?? '…') + errs
   }
   const shadow = shadowStatuses(inc, state?.shadow)
   const rehearsing = inc?.steps?.some((s) => s.stage === 'simulation' && s.status === 'running') && !inc?.simulation
   return (
     <div className="card map">
-      <h3>Live service map {rehearsing && <span className="pill v-running">practice run on the shadow copy…</span>}</h3>
+      <h3>Live service map <span className="muted">red = broken · orange = affected by it (blast radius)</span> {rehearsing && <span className="pill v-running">practice run on the shadow copy…</span>}</h3>
       <svg viewBox="0 0 760 400" width="100%" role="img" aria-label="Service map of the live shop and its shadow copy">
         {EDGES.map(([a, b]) => {
           const bad = status(b) === 'failed'

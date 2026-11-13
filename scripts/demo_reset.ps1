@@ -1,7 +1,9 @@
 # ShadowRun-Ops: put everything back to a clean, healthy state between demos (Laptop A).
 #   powershell -ExecutionPolicy Bypass -File scripts\demo_reset.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\demo_reset.ps1 -ClearHistory   (then restart the AGENT window)
-param([switch]$ClearHistory)
+#   powershell -ExecutionPolicy Bypass -File scripts\demo_reset.ps1 -ClearMemory    (the agent forgets solved problems,
+#                                                                                    so the next one uses the AI again)
+param([switch]$ClearHistory, [switch]$ClearMemory)
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -22,6 +24,16 @@ if ($ClearHistory) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     if (Test-Path data\history.json) { Move-Item data\history.json "data\history-$stamp.json" }
     Write-Host "History archived to data\history-$stamp.json. Restart the AGENT window for a clean dashboard."
+}
+
+if ($ClearMemory) {
+    try {
+        Invoke-RestMethod -Method Post -Uri "http://localhost:8000/memory/clear" -TimeoutSec 3 | Out-Null
+        Write-Host "Incident memory cleared: the next problem will be investigated by the AI again."
+    } catch {
+        if (Test-Path data\memory.json) { Remove-Item data\memory.json }
+        Write-Host "Incident memory file removed (agent not running)."
+    }
 }
 
 Write-Host "Waiting for the shop to be healthy..."

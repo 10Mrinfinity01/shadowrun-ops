@@ -106,7 +106,9 @@ class ShadowSimulator:
 
     def _start(self, name):
         c = self._container(name)
-        if c.status != "running":
+        if c.status == "paused":
+            c.unpause()
+        elif c.status != "running":
             c.start()
 
     def _stop(self, name):
@@ -168,7 +170,7 @@ class ShadowSimulator:
             if twin is None:
                 log("reproduce", "skipped", f"no shadow twin for {proposal.target}")
                 return result("not_reproducible")
-            if op == "restart_container":
+            if op == "restart_container" and not p.get("frozen"):
                 log("reproduce", "skipped", "a generic 'unhealthy service' cannot be recreated faithfully in the copy")
                 return result("not_reproducible")
 
@@ -187,6 +189,9 @@ class ShadowSimulator:
             if op == "start_container":
                 self._stop(twin)
                 what = f"stopped {twin}"
+            elif op == "restart_container":  # frozen: freeze the twin the same way
+                self._container(twin).pause()
+                what = f"froze {twin}"
             elif op in ("rollback_release", "restore_config"):
                 self.runtime.write(p["service"], p["kind"], p["from"])
                 self._restart(twin)
@@ -207,6 +212,12 @@ class ShadowSimulator:
             if op == "start_container":
                 self._start(twin)
                 applied = f"started {twin}"
+            elif op == "restart_container":
+                c = self._container(twin)
+                if c.status == "paused":
+                    c.unpause()
+                c.restart(timeout=3)
+                applied = f"restarted {twin}"
             else:
                 self.runtime.write(p["service"], p["kind"], p["to"])
                 self._restart(twin)

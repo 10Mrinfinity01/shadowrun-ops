@@ -104,7 +104,8 @@ class SafetyEngine:
             else:
                 needs_human.append("no successful shadow rehearsal (" + (sim_status or "not run") + ")")
         if proposal.target in allowed.get("approval_targets", []):
-            needs_human.append(f"policy requires human approval for {proposal.operation} on {proposal.target}")
+            why = p.get("approval_reasons", {}).get(proposal.target, f"{proposal.operation} on {proposal.target} is risky")
+            needs_human.append(f"engineer approval required: {why}")
         if proposal.diagnosis_confidence < rules["min_confidence_for_auto"]:
             needs_human.append(f"diagnosis confidence {proposal.diagnosis_confidence:.2f} is below "
                                f"{rules['min_confidence_for_auto']}")

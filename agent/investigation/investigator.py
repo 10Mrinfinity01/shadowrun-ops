@@ -45,6 +45,9 @@ def rank_hypotheses(snap, ctx=None):
         if s.get("oom_killed"):
             kind, score = "oom_killed", 0.85
             supporting.append(f"{s['container']} was OOM-killed: it ran out of memory")
+        elif s["container_status"] == "paused":
+            kind, score = "service_unhealthy", 0.8
+            supporting.append(f"{s['container']} is frozen: running, but not answering")
         elif s["container_status"] != "running":
             kind, score = "container_down", 0.75
             supporting.append(f"{s['container']} container is '{s['container_status']}'")

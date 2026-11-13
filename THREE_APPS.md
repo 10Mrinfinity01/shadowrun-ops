@@ -3,10 +3,10 @@
 | App | Who uses it | Address | Talks to |
 |---|---|---|---|
 | **QuickCart** | Customers (and judges, to see the damage) | http://localhost:3000 | the shop only |
-| **Judge Injector** | Judges | http://localhost:7070 | the shop only (never the agent) |
+| **Ghost Injector** | Judges | http://localhost:7070 | the shop only (never the agent) |
 | **ShadowRun-Ops** | Engineers | http://localhost:5173 | the agent |
 
-From Laptop B or a phone on the same hotspot, replace `localhost` with Laptop A's IP. Each app links to the others: the dashboard's top bar, and the judge app's buttons.
+From Laptop B or a phone on the same hotspot, replace `localhost` with Laptop A's IP. Each app links to the others: the dashboard's top bar, and the Ghost Injector's buttons.
 
 ## QuickCart (new React app, `quickcart/`)
 - Header with "delivery in 10 minutes", search, login/account, cart button showing item count and total
@@ -45,16 +45,16 @@ From Laptop B or a phone on the same hotspot, replace `localhost` with Laptop A'
    npm install
    cd ..
    ```
-5. Start everything (now 5 windows: agent, dashboard, fake customers, judge app, QuickCart):
+5. Start everything (now 5 windows: agent, dashboard, fake customers, Ghost Injector, QuickCart):
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\start_all.ps1
    ```
 6. Check: `powershell -ExecutionPolicy Bypass -File scripts\preflight.ps1` should say READY (it now checks QuickCart too).
-7. Commit: `git add .`, `git commit -m "Three apps: QuickCart, Judge Injector, ShadowRun-Ops"`, `git push`.
+7. Commit: `git add .`, `git commit -m "Three apps: QuickCart, Ghost Injector, ShadowRun-Ops"`, `git push`.
 
 ## Demo flow with three screens
 1. **QuickCart:** create an account, add a few things, pay. "This is the customer."
-2. **Judge Injector:** a judge clicks **Payment failure**.
+2. **Ghost Injector:** a judge clicks **Payment failure**.
 3. **QuickCart:** try to pay → "Payment failed. Please try again." "Customers are hurting."
 4. **ShadowRun-Ops:** red map, money lost, root cause, practice run on the shadow copy, fix, resolved.
 5. **QuickCart:** pay again → order placed. "Fixed before most customers noticed."

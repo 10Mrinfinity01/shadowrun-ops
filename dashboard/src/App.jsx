@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { Comparison, ImpactBanner, Scoreboard, ServiceMap, rs } from './Phase3.jsx'
 import { Sidebar, SimpleIncident, SimpleServices, StatusHero, NAMES, plainCause, plainAction } from './Simple.jsx'
+import { AgentGraph, AgentWork, AlertsBar, MemoryPanel, Postmortem } from './Agentic.jsx'
 
 // Laptop A: works with no settings. Laptop B: put VITE_BACKEND_URL=http://<Laptop A IP>:8000 in dashboard/.env.local
 const BACKEND = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:8000`
@@ -195,7 +196,7 @@ export default function App() {
       <nav className="appnav">
         <span className="muted">Apps:</span>
         <a href={`http://${window.location.hostname}:3000`} target="_blank" rel="noreferrer">🛒 QuickCart (customer shop)</a>
-        <a href={`http://${window.location.hostname}:7070`} target="_blank" rel="noreferrer">⚡ Judge Injector</a>
+        <a href={`http://${window.location.hostname}:7070`} target="_blank" rel="noreferrer">👻 Ghost Injector</a>
         <span className="here">🛡️ ShadowRun-Ops (you are here)</span>
       </nav>
       <header className="row">
@@ -203,6 +204,7 @@ export default function App() {
         <span className="muted">The AI on-call engineer · practice first, then real</span>
         <span className={`pill ${connected ? 'v-ALLOW' : 'v-BLOCK'}`}>{connected ? 'agent connected' : 'agent offline'}</span>
         {state?.shadow?.available === false && <span className="pill v-BLOCK">shadow copy offline</span>}
+        {state?.agent_info && <span className="pill">{state.agent_info.engine === 'LangGraph' ? '🕸 LangGraph agent' : 'built-in graph (install langgraph)'}</span>}
         <button
           className={state?.kill_switch ? 'deny' : ''}
           onClick={() => post(`/kill-switch/${!state?.kill_switch}`)}
@@ -212,14 +214,21 @@ export default function App() {
       </header>
 
       <StatusHero state={state} connected={connected} inc={inc} />
+      <AlertsBar state={state} />
       <ImpactBanner state={state} />
 
       <div id="map"><ServiceMap state={state} /></div>
 
       <SimpleServices state={state} rootService={rootService} />
 
+      <section id="agent" className="agent-row">
+        <AgentGraph inc={inc} info={state?.agent_info} live={!!state?.active} />
+        <AgentWork inc={inc} />
+      </section>
+
       <section id="incident">
         {inc ? <SimpleIncident inc={inc} post={post} /> : <div className="card muted">No incidents yet. All quiet.</div>}
+        {inc && <Postmortem inc={inc} />}
       </section>
 
       <div id="results"><Scoreboard backend={BACKEND} /></div>
@@ -235,6 +244,10 @@ export default function App() {
             </section>
           </details>
         )}
+        <details className="fold">
+          <summary>Incident memory: problems the agent already knows ({state?.agent_info?.memory?.problems_remembered || 0})</summary>
+          <MemoryPanel info={state?.agent_info} post={post} />
+        </details>
         <details className="fold">
           <summary>Security: careless agent vs ShadowRun-Ops, attacks blocked ({state?.security_events?.length || 0})</summary>
           <Comparison state={state} post={post} />

@@ -8,7 +8,7 @@ allowed_actions:
     targets: [demo-db, shop-cart, shop-payment, shop-storefront, shop-redis]
   restart_container:
     targets: [shop-cart, shop-payment, shop-storefront, demo-db, shop-redis]
-    approval_targets: [demo-db]   # restarting the database interrupts everyone: ask a human
+    approval_targets: [demo-db, shop-redis]   # risky restarts: the on-call engineer must approve
   rollback_release:               # put back the last known-good release, then restart
     targets: [shop-cart, shop-payment, shop-storefront]
   restore_config:                 # put back the last known-good config, then restart
@@ -40,3 +40,10 @@ rules:
   approval_timeout_seconds: 120     # only used when human_approval is true: no answer means no
   auto_undo_on_failed_verification: true   # a fix that doesn't hold on the real shop is reversed automatically
   require_simulation: true          # fix must work in the shadow copy first (failed -> BLOCK, can't reproduce -> ask a human)
+  investigation_token_budget: 8000  # most AI tokens one incident may use; then the rule engine decides
+  max_tool_calls: 5                 # most tools the AI investigator may call per investigation
+  max_rethinks: 2                   # times the agent may rule a cause out and investigate again before waking a human
+
+approval_reasons:                 # shown to the on-call engineer on the approval card
+  demo-db: "restarting the database interrupts every customer and every order in progress"
+  shop-redis: "restarting Redis logs every customer out"

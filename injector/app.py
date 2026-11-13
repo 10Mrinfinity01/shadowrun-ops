@@ -1,4 +1,4 @@
-"""Judge Injector web app. Judges click a failure; it happens to the shop.
+"""Ghost Injector web app. Judges click a failure; it happens to the shop.
 
 It talks ONLY to the shop (Docker and the deploy tool). It never talks to the ShadowRun-Ops agent,
 so the agent has to discover every failure on its own.
@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse
 
 from injector import inject
 
-app = FastAPI(title="Judge Injector")
+app = FastAPI(title="Ghost Injector")
 _lock = threading.Lock()
 LOG = []
 
@@ -27,6 +27,10 @@ CATEGORIES = [
         ("payment_timeout", "Payment timeout", "The gateway timeout is set far too low. Payments time out."),
         ("paid_no_order", "Paid, but no order", "Payment 2.4 charges the customer, then crashes before creating the order."),
         ("status_mismatch", "Payment / order mismatch", "Payment 2.5 saves orders with the wrong status. Checkout LOOKS fine."),
+    ]),
+    ("Needs the on-call engineer (risky fixes: the AI must ask first)", [
+        ("db_frozen", "Database frozen", "The database freezes: running, but not answering. The fix (a restart) interrupts every customer, so the engineer must approve."),
+        ("redis_frozen", "Redis frozen", "The login-session store freezes. The fix (a restart) logs every customer out, so the engineer must approve."),
     ]),
     ("Advanced", [
         ("stop_db", "Database down", "The database container stops."),
@@ -83,10 +87,11 @@ def shop_status():
                 out[name] = "up" if r.status < 400 else "down"
         except Exception:
             out[name] = "down"
-    r = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True)
-    running = set(r.stdout.split())
-    out["database"] = "up" if "demo-db" in running else "down"
-    out["redis"] = "up" if "shop-redis" in running else "down"
+    r = subprocess.run(["docker", "ps", "--format", "{{.Names}}|{{.Status}}"], capture_output=True, text=True)
+    status = dict(line.split("|", 1) for line in r.stdout.splitlines() if "|" in line)
+    for name, key in (("demo-db", "database"), ("shop-redis", "redis")):
+        st = status.get(name, "")
+        out[key] = "down" if not st or "Paused" in st else "up"  # a frozen container still shows in "docker ps"
     try:
         rel = {s: json.loads((inject.changes.RUNTIME / f"{s}.release.json").read_text())["version"]
                for s in ("cart", "payment") if (inject.changes.RUNTIME / f"{s}.release.json").exists()}
@@ -97,7 +102,7 @@ def shop_status():
 
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Judge Injector</title><style>
+<title>Ghost Injector</title><style>
 body{font-family:system-ui,sans-serif;margin:0;background:#0d1117;color:#e6edf3}
 header{padding:20px 28px;border-bottom:1px solid #30363d}h1{margin:0;font-size:24px}
 .sub{color:#8b949e;margin-top:4px}main{padding:20px 28px;max-width:1150px}
@@ -117,7 +122,7 @@ font-size:13px;white-space:pre-wrap;max-height:260px;overflow:auto}.t{color:#8b9
 .down{background:#2d1214;color:#f85149;border:1px solid #da3633}.ver{background:#161b22;color:#8b949e;border:1px solid #30363d}
 .note{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:12px;color:#8b949e;font-size:14px}
 </style></head><body>
-<header><div class="hrow"><div><h1>⚡ Judge Injector</h1><div class="sub">Pick any failure. It happens to QuickCart. ShadowRun-Ops is NOT told: it has to find it on its own.</div></div>
+<header><div class="hrow"><div><h1>👻 Ghost Injector</h1><div class="sub">Pick any failure. It happens to QuickCart. ShadowRun-Ops is NOT told: it has to find it on its own.</div></div>
 <div class="links"><a id="shoplink" target="_blank">Open QuickCart ↗</a><a id="opslink" target="_blank">ShadowRun-Ops dashboard ↗</a></div></div>
 <div id="status" class="status">Checking the shop…</div></header>
 <main>

@@ -12,7 +12,7 @@ Start-Sleep -Seconds 4
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\dashboard'; `$host.UI.RawUI.WindowTitle='2 DASHBOARD'; npm run dev -- --host"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; `$host.UI.RawUI.WindowTitle='3 FAKE CUSTOMERS'; .\venv\Scripts\python.exe traffic\traffic.py"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\quickcart'; `$host.UI.RawUI.WindowTitle='5 QUICKCART'; if (-not (Test-Path node_modules)) { npm install }; npm run dev"
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; `$host.UI.RawUI.WindowTitle='4 JUDGE INJECTOR'; .\venv\Scripts\python.exe -m uvicorn injector.app:app --host 0.0.0.0 --port 7070"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; `$host.UI.RawUI.WindowTitle='4 GHOST INJECTOR'; .\venv\Scripts\python.exe -m uvicorn injector.app:app --host 0.0.0.0 --port 7070"
 Start-Sleep -Seconds 8
 Start-Process "http://localhost:7070"
 Start-Sleep -Seconds 4

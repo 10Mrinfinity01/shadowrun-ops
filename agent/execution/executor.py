@@ -61,7 +61,10 @@ class Executor:
                 undo = {"kind": "container", "target": proposal.target, "restore_status": was,
                         "describe": f"stop {proposal.target} again (it was '{was}' before the fix)"}
             elif op == "restart_container":
-                self._container(proposal.target).restart(timeout=10)
+                c = self._container(proposal.target)
+                if c.status == "paused":  # a frozen container must be unfrozen before it can restart cleanly
+                    c.unpause()
+                c.restart(timeout=10)
                 detail = f"restarted {proposal.target}"
                 undo = None  # same release, same config, same data: there is nothing to put back
             else:  # rollback_release / restore_config: put back the known-good file, then restart

@@ -1,4 +1,4 @@
-"""Judge Injector. Breaks the shop the way real life would, and never tells the agent what it did.
+"""Ghost Injector. Breaks the shop the way real life would, and never tells the agent what it did.
 
 Usage (repo root, Laptop A):
     python injector/inject.py <scenario>
@@ -9,6 +9,9 @@ Scenarios:
     payment_timeout a developer sets the payment gateway timeout far too low: payments time out
     paid_no_order   payment release 2.4 charges the customer, then crashes before creating the order
     status_mismatch payment release 2.5 creates orders with the wrong status. Checkout LOOKS fine
+  Needs the on-call engineer (risky fixes)
+    db_frozen       the database freezes: still running but not answering. Fix = restart the database
+    redis_frozen    the Redis session store freezes. Fix = restart Redis (this logs every customer out)
   Advanced
     stop_db         the database container goes down (alias: db_down)
     redis_down      the Redis session store goes down
@@ -74,6 +77,16 @@ def status_mismatch():
     print("Injected: payment release 2.5 deployed (orders get the wrong status; checkout still looks fine)")
 
 
+def db_frozen():
+    r = docker("pause", "demo-db")
+    print("Injected: database frozen (running, but not answering)" if r.returncode == 0 else r.stderr)
+
+
+def redis_frozen():
+    r = docker("pause", "shop-redis")
+    print("Injected: Redis session store frozen" if r.returncode == 0 else r.stderr)
+
+
 def redis_down():
     r = docker("stop", "shop-redis")
     print("Injected: Redis session store stopped" if r.returncode == 0 else r.stderr)
@@ -131,6 +144,8 @@ def reset():
                 changes.record_change(svc, kind, current, good, actor="demo-reset", is_reset=True)
                 changes.write_runtime(svc, kind, good)
                 docker("restart", f"shop-{svc}")
+    for name in SHOP:  # a frozen (paused) container can't be started: unfreeze it first
+        docker("unpause", name)
     r = docker("start", *SHOP)
     print("Everything reset to the good state" if r.returncode == 0 else r.stderr)
 
@@ -144,7 +159,7 @@ def status():
 
 SCENARIOS = {"stop_db": stop_db, "db_down": stop_db, "bad_deploy": bad_deploy, "payment_failure": bad_deploy,
              "payment_timeout": payment_timeout, "paid_no_order": paid_no_order, "status_mismatch": status_mismatch,
-             "redis_down": redis_down, "api_slow": api_slow, "broken_config": broken_config,
+             "redis_down": redis_down, "db_frozen": db_frozen, "redis_frozen": redis_frozen, "api_slow": api_slow, "broken_config": broken_config,
              "memory_leak": memory_leak, "poisoned_log": poisoned_log, "rogue_action": rogue_action,
              "reset": reset, "status": status}
 

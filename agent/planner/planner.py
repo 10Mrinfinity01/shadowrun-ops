@@ -22,6 +22,8 @@ def plan(diagnosis, known_good=None):
         return None  # nothing safe to propose: escalate to a human
     entry = CATALOGUE[cause.kind]
     params = {"service": cause.service}
+    if any("frozen" in x for x in cause.supporting):
+        params["frozen"] = True
     rollback = entry["rollback"]
 
     if cause.kind in ("bad_deploy", "bad_config"):

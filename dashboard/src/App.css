@@ -130,3 +130,47 @@ button.small { padding: 4px 10px; font-size: 13px; }
 .fold[open] > summary { border-bottom: 1px solid #eaeef2; }
 .fold > *:not(summary) { margin: 12px; }
 @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } .side { position: static; height: auto; } }
+
+.approval { border: 2px solid #f59e0b; background: #fffbeb; border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; animation: glow 1.6s infinite; }
+@keyframes glow { 50% { box-shadow: 0 0 0 6px rgba(245,158,11,.18); } }
+.ap-head { display: flex; gap: 12px; align-items: center; }
+.ap-bell { font-size: 30px; } .ap-head b { font-size: 18px; color: #78350f; } .ap-sub { font-size: 14px; color: #92400e; }
+.ap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; margin: 14px 0; }
+.ap-grid span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #92400e; }
+.ap-grid b { font-size: 15px; color: #1f2328; } .ap-ok { color: #15803d !important; }
+.ap-buttons { display: flex; gap: 12px; }
+button.big { padding: 12px 22px; font-size: 16px; font-weight: 700; border-radius: 10px; }
+.st-awaiting_approval { background: #fff8c5; color: #7d4e00; }
+
+/* ---- agentic layer ---- */
+.alerts { display: flex; gap: 16px; justify-content: space-between; align-items: center; padding: 14px 18px; border-radius: 12px; margin-bottom: 16px; border: 1px solid; }
+.alerts.quiet { background: #f8fafc; border-color: #e2e8f0; }
+.alerts.firing { background: #fff7ed; border-color: #fdba74; }
+.alerts-title { font-weight: 700; font-size: 16px; }
+.alerts-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+.alert-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.apill { display: inline-flex; flex-direction: column; padding: 4px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+.apill small { font-weight: 400; font-size: 11px; }
+.sev-critical { background: #fee2e2; color: #991b1b; } .sev-high { background: #ffedd5; color: #9a3412; }
+.alerts-right { display: flex; gap: 18px; flex: none; }
+.spark-label { font-size: 12px; color: #64748b; }
+.agent-row { display: grid; grid-template-columns: 1fr; gap: 0; }
+.agent-graph svg { max-height: 380px; }
+.agent-graph .trail { columns: 2; }
+.trail { margin: 8px 0 0; padding-left: 20px; font-size: 13px; max-height: 180px; overflow-y: auto; }
+.trail li { margin: 2px 0; }
+.agent-work .tokens { margin-bottom: 12px; }
+.tok-row { display: flex; justify-content: space-between; font-size: 14px; }
+.tok-bar { height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin: 6px 0 4px; }
+.tok-bar span { display: block; height: 100%; background: #2563eb; }
+.mem-hit { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; }
+.inv { border-top: 1px solid #eaeef2; padding-top: 8px; margin-top: 8px; }
+.inv-head { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.tool { border-left: 3px solid #93c5fd; padding: 4px 10px; margin: 6px 0; font-size: 13px; }
+.thought { color: #334155; }
+.tool code { display: inline-block; margin: 3px 0; }
+.result { color: #64748b; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 70px; overflow: hidden; }
+.final { background: #eff6ff; color: #1e3a8a; padding: 6px 10px; border-radius: 6px; font-size: 13px; margin-top: 6px; }
+.fp { margin-top: 8px; word-break: break-all; }
+.pm { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; font-size: 14px; }
+.pm dt { font-weight: 600; color: #57606a; } .pm dd { margin: 0; } .pm ul { margin: 0; padding-left: 18px; }
