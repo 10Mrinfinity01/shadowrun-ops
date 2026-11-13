@@ -12,7 +12,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "shop_demo_only")
 DB_NAME = os.getenv("DB_NAME", "shop")
 
 DEFAULT_RELEASE = {"version": "2.2"}
-DEFAULT_CONFIG = {"db_host": "demo-db", "db_port": 5432, "db_timeout_s": 2}
+DEFAULT_CONFIG = {"db_host": "demo-db", "db_port": 5432, "db_timeout_s": 2, "gateway_timeout_ms": 2000}
 
 
 def log(level, msg):

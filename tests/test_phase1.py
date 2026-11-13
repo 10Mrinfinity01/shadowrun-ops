@@ -168,6 +168,7 @@ class Safety(unittest.TestCase):
 
     def test_kill_switch_cooldown_attempts(self):
         eng = SafetyEngine(SECRET)
+        eng.policy["rules"]["cooldown_seconds_per_target"] = 60  # off by default now; the rule still works if set
         p = self.proposal()
         self.assertEqual(eng.decide(p, kill_switch=True).verdict, "BLOCK")
         eng.record_execution(p)

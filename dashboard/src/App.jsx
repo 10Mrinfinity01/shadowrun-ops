@@ -5,7 +5,7 @@ import { Comparison, ImpactBanner, Scoreboard, ServiceMap, rs } from './Phase3.j
 // Laptop A: works with no settings. Laptop B: put VITE_BACKEND_URL=http://<Laptop A IP>:8000 in dashboard/.env.local
 const BACKEND = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:8000`
 const WS_URL = BACKEND.replace(/^http/, 'ws') + '/ws'
-const ORDER = ['storefront', 'cart', 'payment', 'database']
+const ORDER = ['storefront', 'cart', 'payment', 'database', 'redis']
 
 function useBackendState() {
   const [state, setState] = useState(null)
@@ -29,6 +29,17 @@ function useBackendState() {
     return () => { clearTimeout(retry.current); ws && ws.close() }
   }, [])
   return [state, connected]
+}
+
+const MODES = { always: 'always ask', timed: 'ask, auto after 20s', auto: 'only when unsure' }
+const NEXT_MODE = { always: 'timed', timed: 'auto', auto: 'always' }
+
+function Countdown({ deadline, auto }) {
+  const [now, setNow] = useState(Date.now() / 1000)
+  useEffect(() => { const t = setInterval(() => setNow(Date.now() / 1000), 500); return () => clearInterval(t) }, [])
+  const left = Math.max(0, Math.ceil(deadline - now))
+  return <span className={`pill ${auto ? 'v-running' : 'v-BLOCK'}`}>
+    {auto ? `auto-approves in ${left}s if nobody answers` : `${left}s left, then denied (no answer means no)`}</span>
 }
 
 const post = (path) => fetch(BACKEND + path, { method: 'POST' }).then((r) => r.json())
@@ -120,7 +131,8 @@ function OneMinuteCard({ inc }) {
   const waiting = inc.status === 'awaiting_approval'
   return (
     <div className="card minute">
-      <h3>Incident {inc.id} <span className={`pill st-${inc.status}`}>{inc.status.replace('_', ' ')}</span></h3>
+      <h3>Incident {inc.id} <span className={`pill st-${inc.status}`}>{inc.status.replace('_', ' ')}</span>
+        {inc.recurring && <span className="pill v-BLOCK">recurring ×{inc.recurring}</span>}</h3>
       <dl>
         <dt>What broke</dt><dd>{inc.event?.affected_services?.join(', ')}</dd>
         {d && (<><dt>Why</dt><dd>{d.explanation} <span className="muted">(confidence {d.confidence}{d.llm_provider ? `, reviewed by ${d.llm_provider}` : ''})</span></dd></>)}
@@ -129,14 +141,25 @@ function OneMinuteCard({ inc }) {
         {d?.suspicious_log_lines?.length > 0 && (<><dt>Quarantined</dt><dd>
           {d.suspicious_log_lines.map((l, i) => <code key={i} className="quarantined">{l}</code>)}</dd></>)}
         {p && (<><dt>Fix</dt><dd>{p.operation} → <code>{p.target}</code></dd>
-          <dt>Undo plan</dt><dd>{p.rollback}</dd>
+          <dt>Undo</dt><dd>
+            {inc.undone ? <span className="pill v-skipped">undone</span>
+              : inc.result?.undo ? <><span>{inc.result.undo.describe}</span>{' '}
+                <button className="deny small" onClick={() => {
+                  if (confirm('Undo the agent\'s fix? This puts back exactly what was there before (it may re-create the problem).'))
+                    post(`/undo/${inc.id}`)
+                }}>Undo this fix</button></>
+              : inc.result?.snapshot_note ? <span className="muted">{inc.result.snapshot_note}</span>
+              : <span className="muted">{p.rollback}</span>}
+          </dd>
           <dt>Practice run</dt><dd><PracticeRun inc={inc} /></dd></>)}
-        {dec && (<><dt>Policy</dt><dd><span className={`pill v-${dec.verdict}`}>{dec.verdict}</span> {dec.reasons.join('; ')}</dd></>)}
+        {dec && (<><dt>Policy</dt><dd><span className={`pill v-${(dec.shown_verdict || dec.verdict).split(' ')[0]}`}>{dec.shown_verdict || dec.verdict}</span> {dec.reasons.join('; ')}</dd></>)}
         {inc.recovery_seconds != null && (<><dt>Recovered in</dt><dd>{inc.recovery_seconds}s</dd></>)}
+        {inc.follow_up && (<><dt>Follow-up</dt><dd className="followup">{inc.follow_up.detail}</dd></>)}
         {inc.impact && (<><dt>Customer impact</dt><dd>{inc.impact.failed_checkouts} failed checkouts · {rs(inc.impact.lost_paise)} lost · outage {inc.impact.outage_seconds}s</dd></>)}
       </dl>
       {waiting && p && (
         <div className="row gap">
+          {inc.approval_deadline && <Countdown deadline={inc.approval_deadline} auto={inc.auto_on_timeout} />}
           <button className="approve" onClick={() => post(`/approve/${p.action_id}?approver=dashboard`)}>Approve</button>
           <button className="deny" onClick={() => post(`/deny/${p.action_id}?approver=dashboard`)}>Deny</button>
         </div>
@@ -166,6 +189,12 @@ export default function App() {
   const probe = state?.probe
   return (
     <div className="page">
+      <nav className="appnav">
+        <span className="muted">Apps:</span>
+        <a href={`http://${window.location.hostname}:3000`} target="_blank" rel="noreferrer">🛒 QuickCart (customer shop)</a>
+        <a href={`http://${window.location.hostname}:7070`} target="_blank" rel="noreferrer">⚡ Judge Injector</a>
+        <span className="here">🛡️ ShadowRun-Ops (you are here)</span>
+      </nav>
       <header className="row">
         <h1>ShadowRun-Ops</h1>
         <span className="muted">Practice first. Then real.</span>
@@ -173,6 +202,7 @@ export default function App() {
         {state?.deploy_window && <span className="pill v-running">deploy in progress: monitoring paused</span>}
         {state?.shadow?.available === true && <span className="pill v-skipped">shadow copy ready</span>}
         {state?.shadow?.available === false && <span className="pill v-BLOCK">shadow copy offline</span>}
+        <span className="pill v-ALLOW" title="The agent only acts on fixes it has proven safe on the shadow copy, and every action can be undone">every action reversible · undo available</span>
         <button
           className={state?.kill_switch ? 'deny' : ''}
           onClick={() => post(`/kill-switch/${!state?.kill_switch}`)}
@@ -192,8 +222,13 @@ export default function App() {
         ))}
         <div className={`card service ${probe?.result === 'ok' ? 'ok' : 'bad'}`}>
           <strong>customer checkout</strong>
-          <div className="muted">synthetic probe</div>
+          <div className="muted">synthetic probe{probe?.latency_ms != null ? ` · ${probe.latency_ms} ms` : ''}</div>
           <div className="detail">{probe?.detail ?? 'waiting for data'}</div>
+        </div>
+        <div className={`card service ${state?.consistency?.result === 'failed' ? 'bad' : state?.consistency?.result === 'ok' ? 'ok' : ''}`}>
+          <strong>payment ↔ order check</strong>
+          <div className="muted">money taken = orders paid</div>
+          <div className="detail">{state?.consistency?.detail ?? 'waiting for data'}</div>
         </div>
       </section>
 

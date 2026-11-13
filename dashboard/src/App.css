@@ -51,3 +51,15 @@ code { background: #f6f8fa; padding: 1px 6px; border-radius: 6px; }
 .side.good { background: #f0fff4; border-color: #1a7f37; }
 .cmd { display: block; padding: 8px; background: #1f2328; color: #f6f8fa; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
 section, .card { margin-bottom: 16px; }
+.followup { background: #fff8c5; color: #7d4e00; padding: 6px 8px; border-radius: 6px; }
+.grid { grid-template-columns: repeat(4, 1fr); }
+button.small { padding: 4px 10px; font-size: 13px; }
+.st-held { background: #ddf4ff; color: #0a3069; }
+.v-HOLD { background: #ddf4ff; color: #0a3069; }
+.v-reverse, .v-alert { background: #fff8c5; color: #7d4e00; }
+.v-reversible, .v-quarantined { background: #ddf4ff; color: #0a3069; }
+.appnav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; margin: -8px 0 16px;
+  background: #fff; border: 1px solid #d0d7de; border-radius: 10px; font-size: 14px; }
+.appnav a { color: #0969da; text-decoration: none; padding: 4px 10px; border-radius: 6px; }
+.appnav a:hover { background: #ddf4ff; }
+.appnav .here { margin-left: auto; font-weight: 600; color: #1a7f37; }

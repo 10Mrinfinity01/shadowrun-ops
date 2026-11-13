@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 class Signal(BaseModel):
-    type: Literal["health_check", "container_state", "customer_probe"]
+    type: Literal["health_check", "container_state", "customer_probe", "consistency_check"]
     target: str
     result: Literal["ok", "failed"]
     detail: str = ""

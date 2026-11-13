@@ -32,10 +32,18 @@ def call(method, path, body=None, timeout=3):
 
 
 def write_stats(stats):
+    """Write the stats file. On Windows the swap fails while another program is reading the file at that
+    exact moment, so retry briefly, then skip this update: the next one is a fraction of a second away."""
     STATS.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATS.with_suffix(".tmp")
-    tmp.write_text(json.dumps(stats))
-    os.replace(tmp, STATS)  # atomic: the agent never reads a half-written file
+    data = json.dumps(stats)
+    for _ in range(5):
+        try:
+            tmp.write_text(data)
+            os.replace(tmp, STATS)  # atomic: the agent never reads a half-written file
+            return
+        except OSError:
+            time.sleep(0.05)
 
 
 def main():

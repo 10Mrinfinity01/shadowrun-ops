@@ -18,7 +18,7 @@ KNOWN_GOOD = DATA / "known_good.json"
 MANAGED = ["cart", "payment", "storefront"]
 DEFAULTS = {
     "release": {"version": "2.2"},
-    "config": {"db_host": "demo-db", "db_port": 5432, "db_timeout_s": 2},
+    "config": {"db_host": "demo-db", "db_port": 5432, "db_timeout_s": 2, "gateway_timeout_ms": 2000},
 }
 DEPLOY_WINDOW_S = 12        # monitoring stays quiet while a deploy restarts the container
 PROMOTE_AFTER_HEALTHY_S = 60
@@ -92,7 +92,7 @@ class KnownGood:
             return {s: {k: dict(v) for k, v in DEFAULTS.items()} for s in MANAGED}
 
     def get(self, service, kind):
-        return self.load().get(service, {}).get(kind, dict(DEFAULTS[kind]))
+        return {**DEFAULTS[kind], **self.load().get(service, {}).get(kind, {})}
 
     def set(self, service, kind, value):
         data = self.load()

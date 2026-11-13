@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 
 const rs = (paise) => '₹' + Math.round((paise || 0) / 100).toLocaleString('en-IN')
-const CONTAINER_TO_SERVICE = { 'demo-db': 'database', 'shop-cart': 'cart', 'shop-payment': 'payment', 'shop-storefront': 'storefront' }
+const CONTAINER_TO_SERVICE = { 'demo-db': 'database', 'shop-cart': 'cart', 'shop-payment': 'payment', 'shop-storefront': 'storefront', 'shop-redis': 'redis' }
 
 const LIVE = {
   customers: { x: 305, y: 14 }, storefront: { x: 305, y: 84 },
-  cart: { x: 135, y: 158 }, payment: { x: 475, y: 158 }, database: { x: 305, y: 232 },
+  cart: { x: 135, y: 158 }, payment: { x: 475, y: 158 }, database: { x: 305, y: 232 }, redis: { x: 560, y: 84 },
 }
-const EDGES = [['customers', 'storefront'], ['storefront', 'cart'], ['storefront', 'payment'], ['cart', 'database'], ['payment', 'database']]
+const EDGES = [['customers', 'storefront'], ['storefront', 'cart'], ['storefront', 'payment'], ['storefront', 'redis'],
+  ['cart', 'database'], ['payment', 'database']]
 const W = 150, H = 46
-const SHADOW_ORDER = ['storefront', 'cart', 'payment', 'database']
+const SHADOW_ORDER = ['storefront', 'cart', 'payment', 'database', 'redis']
 
 const COLORS = {
   ok: ['#dafbe1', '#1a7f37', '#116329'], failed: ['#ffebe9', '#cf222e', '#a40e26'],
@@ -24,7 +25,7 @@ function Node({ x, y, w = W, h = H, label, sub, status, root }) {
       <rect x={x} y={y} width={w} height={h} rx="9" fill={fill} stroke={stroke} strokeWidth="1.5" />
       <text x={x + w / 2} y={y + (sub ? 19 : h / 2 + 5)} textAnchor="middle" fontSize="14" fontWeight="600" fill={text}>{label}</text>
       {sub && <text x={x + w / 2} y={y + 35} textAnchor="middle" fontSize="11" fill={text}>{sub}</text>}
-      {root && <text x={x + w + 10} y={y + h / 2 + 4} fontSize="12" fontWeight="700" fill="#7d4e00">◀ ROOT CAUSE</text>}
+      {root && <text x={x + w / 2} y={y - 10} textAnchor="middle" fontSize="12" fontWeight="700" fill="#7d4e00">▼ ROOT CAUSE</text>}
     </g>
   )
 }
@@ -55,7 +56,8 @@ export function ServiceMap({ state }) {
   const status = (n) => (n === 'customers' ? (state?.probe?.result === 'ok' ? 'ok' : state?.probe ? 'failed' : 'idle')
     : services[n] ? (services[n].health === 'ok' ? 'ok' : 'failed') : 'idle')
   const sub = (n) => {
-    if (n === 'customers') return state?.traffic?.live ? 'fake customers' : 'checkout probe'
+    if (n === 'customers') return (state?.traffic?.live ? 'fake customers' : 'checkout probe')
+      + (state?.probe?.latency_ms != null ? ` · ${state.probe.latency_ms} ms` : '')
     const m = /"version":"([^"]+)"/.exec(services[n]?.detail || '')
     if (services[n]?.oom_killed) return 'OOM-killed'
     return m ? `v${m[1]}` : services[n]?.container_status
@@ -68,7 +70,11 @@ export function ServiceMap({ state }) {
       <svg viewBox="0 0 760 400" width="100%" role="img" aria-label="Service map of the live shop and its shadow copy">
         {EDGES.map(([a, b]) => {
           const bad = status(b) === 'failed'
-          return <line key={a + b} x1={LIVE[a].x + W / 2} y1={LIVE[a].y + H} x2={LIVE[b].x + W / 2} y2={LIVE[b].y}
+          const side = LIVE[a].y === LIVE[b].y  // same row: draw side to side
+          const [x1, y1, x2, y2] = side
+            ? [LIVE[a].x + W, LIVE[a].y + H / 2, LIVE[b].x, LIVE[b].y + H / 2]
+            : [LIVE[a].x + W / 2, LIVE[a].y + H, LIVE[b].x + W / 2, LIVE[b].y]
+          return <line key={a + b} x1={x1} y1={y1} x2={x2} y2={y2}
             stroke={bad ? '#cf222e' : '#8c959f'} strokeWidth={bad ? 2.5 : 1.5} strokeDasharray={bad ? '5 4' : ''} />
         })}
         {Object.entries(LIVE).map(([n, p]) => (
@@ -77,7 +83,7 @@ export function ServiceMap({ state }) {
         <rect x="20" y="300" width="720" height="92" rx="12" fill="none" stroke="#8c959f" strokeDasharray="6 5" />
         <text x="34" y="320" fontSize="12" fontWeight="600" fill="#57606a">SHADOW COPY (isolated rehearsal environment)</text>
         {SHADOW_ORDER.map((n, i) => (
-          <Node key={n} x={44 + i * 175} y={332} w={150} h={46} label={`shadow-${n === 'database' ? 'db' : n}`}
+          <Node key={n} x={32 + i * 142} y={332} w={132} h={46} label={`shadow-${n === 'database' ? 'db' : n}`}
             sub={shadow[n].sub} status={shadow[n].status} />
         ))}
       </svg>

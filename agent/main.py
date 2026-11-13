@@ -15,12 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agent import changes, config
 from agent.careless import careless_answer
-from agent.contracts import ActionProposal, Grant
+from agent.contracts import ActionProposal, Grant, PolicyDecision
 from agent.execution.executor import Executor
 from agent.investigation.investigator import Context, investigate
 from agent.llm import chat_json
 from agent.monitoring.monitor import Monitor
 from agent.planner.planner import plan
+from agent import recurrence
 from agent.safety.engine import SafetyEngine
 from agent.shadow.simulator import ShadowSimulator
 from agent.verification.verifier import verify
@@ -29,6 +30,19 @@ AUDIT_FILE = changes.DATA / "audit.jsonl"
 HISTORY_FILE = changes.DATA / "history.json"
 TRAFFIC_FILE = changes.DATA / "traffic_stats.json"
 SCOREBOARD_FILE = changes.DATA / "scoreboard.json"
+SETTINGS_FILE = changes.DATA / "settings.json"
+
+
+def load_settings():
+    try:
+        return json.loads(SETTINGS_FILE.read_text())
+    except Exception:
+        return {"approval_mode": "auto"}  # no approval waits: proven-safe, reversible fixes only
+
+
+def save_settings():
+    SETTINGS_FILE.parent.mkdir(exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps({"approval_mode": STATE["approval_mode"]}))
 
 monitor = Monitor()
 known_good = changes.KnownGood()
@@ -50,6 +64,8 @@ STATE = {
     "shadow": {"available": None, "last": None},
     "traffic": None,        # fake-customer stats, if traffic/traffic.py is running
     "comparison": None,     # careless agent vs ShadowRun-Ops
+    "approval_mode": load_settings().get("approval_mode", "auto"),
+    "consistency": None,
     "last_unhealthy_at": 0,
 }
 HIDDEN = {"quiet_until", "last_unhealthy_at"}
@@ -134,7 +150,31 @@ def effective_changes():
 
 
 def errors_since(container, since):
-    return sum(1 for line in monitor.logs(container, lines=300, since=since) if " ERROR " in f" {line} ")
+    return sum(1 for line in monitor.logs(container, lines=300, since=since)
+               if " ERROR " in f" {line} " or " WARN " in f" {line} ")
+
+
+def money_follow_up(inc, proposal):
+    """After a payment bug: list the money problems for a human. The agent never edits payment data itself."""
+    import httpx
+    since = inc["started"] - 120
+    blamed = proposal.parameters.get("blamed_change")
+    for c in changes.all_changes():
+        if c["id"] == blamed:
+            since = c["time"] - 5
+    try:
+        r = httpx.get(config.CONSISTENCY_URL, params={"since": since}, timeout=3).json()
+    except Exception:
+        return None
+    if not r.get("payments_without_order") and not r.get("status_mismatch"):
+        return None
+    parts = []
+    if r["payments_without_order"]:
+        parts.append(f"{r['payments_without_order']} customer(s) were charged with no order created "
+                     f"(Rs {r['unmatched_amount_paise'] / 100:.0f}): refund them or create their orders")
+    if r["status_mismatch"]:
+        parts.append(f"{r['status_mismatch']} order(s) have a status that doesn't match a captured payment: correct them")
+    return {"detail": "; ".join(parts) + ". The agent does not change payment data itself.", "counts": r}
 
 
 def build_context():
@@ -152,6 +192,26 @@ def read_impact_safely(inc):
         return impact_for(inc)
     except Exception:
         return None
+
+
+def run_undo(inc, undo, who):
+    """Reverse one of the agent's own fixes: a signed, policy-checked 'undo' action like any other."""
+    p = ActionProposal(action_id=f"UNDO-{inc['id']}", incident_id=inc["id"], operation="undo", target=undo["target"],
+                       parameters={"undo": undo}, expected_outcome=["state from before the fix"], verify_services=[],
+                       reversible=True, diagnosis_confidence=1.0)
+    rules = safety.policy["rules"]
+    allowed = safety.policy["allowed_actions"].get("undo", {}).get("targets", [])
+    if STATE["kill_switch"] or undo["target"] not in allowed:
+        return {"ok": False, "detail": "undo refused by policy"}
+    expires = time.time() + rules["grant_ttl_seconds"]
+    from agent.safety.engine import sign
+    grant = Grant(action_id=p.action_id, operation="undo", target=p.target, expires_at=expires,
+                  signature=sign(config.GRANT_SECRET, p.action_id, "undo", p.target, expires))
+    decision = PolicyDecision(decision_id="DEC-UNDO", action_id=p.action_id, verdict="ALLOW",
+                              reasons=[f"undo requested by {who}"], grant=grant)
+    r = executor.execute(p, decision)
+    audit("undo", {"incident": inc["id"], "by": who, "result": r})
+    return r
 
 
 def ask_llm(system, user):
@@ -184,50 +244,111 @@ async def handle_incident(event, snap):
                        f"{len(diagnosis.suspicious_log_lines)} suspicious log line(s) quarantined and ignored",
                        diagnosis.suspicious_log_lines)
 
-        proposal = plan(diagnosis, known_good)
-        if proposal is None:
+        rules = safety.policy["rules"]
+        proposal, reversing = None, None
+        if diagnosis.root_cause:
+            seen = recurrence.count_recent(STATE["history"], diagnosis.root_cause.service,
+                                           window_s=rules.get("recurrence_window_seconds", 600)) + 1
+            if seen >= rules.get("recurrence_threshold", 3):
+                inc["recurring"] = seen
+                proposal, reversing = recurrence.reverse_proposal(diagnosis, known_good)
+                if proposal:
+                    await step(inc, "recurring", "reverse",
+                               f"{diagnosis.root_cause.service} has failed {seen} times in "
+                               f"{rules.get('recurrence_window_seconds', 600) // 60} min. Fixing the symptom again isn't "
+                               f"enough: reversing the latest change ({reversing['id']} by {reversing['actor']}) "
+                               "to the known-good version.")
+                else:
+                    await step(inc, "recurring", "alert",
+                               f"{diagnosis.root_cause.service} has failed {seen} times in "
+                               f"{rules.get('recurrence_window_seconds', 600) // 60} min and there is no recent change to "
+                               "reverse. Fixing it again now; an engineer must find the permanent fix.")
+                security_event("recurring_problem", f"{diagnosis.root_cause.service} failed {seen} times in 10 min",
+                               {"incident": inc["id"]})
+
+        # Candidate fixes, best first: the reverse strategy (if recurring), then the root cause, then alternatives.
+        candidates = [proposal] if proposal else []
+        for hyp in [diagnosis.root_cause] + list(diagnosis.alternatives or []):
+            if hyp is None:
+                continue
+            alt = plan(diagnosis.model_copy(update={"root_cause": hyp}), known_good)
+            if alt and all((alt.operation, alt.target) != (c.operation, c.target) for c in candidates):
+                candidates.append(alt)
+        if not candidates:
             inc["status"] = "escalated"
-            await step(inc, "escalated", "done", "No safe action in the catalogue for this cause. Waking a human.")
+            await step(inc, "escalated", "done", "No action in the catalogue fits this cause. Waking a human.")
             return
-        inc["proposal"] = proposal.model_dump(mode="json")
-        await step(inc, "planned", "done", f"Proposed {proposal.operation} on {proposal.target}", inc["proposal"])
 
-        await step(inc, "simulation", "running", "Rehearsing the fix on the shadow copy: reproduce first, then fix")
         loop = asyncio.get_running_loop()
-        inc["sim_live"] = []
+        for n, proposal in enumerate(candidates[:3]):
+            inc["proposal"] = proposal.model_dump(mode="json")
+            await step(inc, "planned", "done", ("Proposed " if n == 0 else "Trying the next fix: ")
+                       + f"{proposal.operation} on {proposal.target}", inc["proposal"])
+            await step(inc, "simulation", "running", "Rehearsing the fix on the shadow copy: reproduce first, then fix")
+            inc["sim_live"] = []
 
-        def on_sim_step(s):
-            inc["sim_live"].append(s)
-            asyncio.run_coroutine_threadsafe(broadcast(), loop)
+            def on_sim_step(s):
+                inc["sim_live"].append(s)
+                asyncio.run_coroutine_threadsafe(broadcast(), loop)
 
-        sim = await asyncio.to_thread(simulator.simulate, proposal, on_sim_step)
-        proposal.parameters["simulation"] = sim
-        inc["proposal"] = proposal.model_dump(mode="json")
-        inc["simulation"] = sim
-        STATE["shadow"]["last"] = {"incident": inc["id"], "status": sim["status"], "duration_s": sim["duration_s"]}
-        label = {"passed": "passed", "failed": "failed", "not_reproducible": "not reproducible"}.get(sim["status"], "error")
-        summary = " | ".join(f"{s['stage']}: {s['detail']}" for s in sim["steps"] if s["stage"] != "restore")
-        await step(inc, "simulation", label, f"{summary} ({sim['duration_s']}s)", sim)
+            sim = await asyncio.to_thread(simulator.simulate, proposal, on_sim_step)
+            proposal.parameters["simulation"] = sim
+            inc["proposal"] = proposal.model_dump(mode="json")
+            inc["simulation"] = sim
+            STATE["shadow"]["last"] = {"incident": inc["id"], "status": sim["status"], "duration_s": sim["duration_s"]}
+            label = {"passed": "passed", "failed": "failed", "not_reproducible": "not reproducible"}.get(sim["status"], "error")
+            summary = " | ".join(f"{s['stage']}: {s['detail']}" for s in sim["steps"] if s["stage"] != "restore")
+            await step(inc, "simulation", label, f"{summary} ({sim['duration_s']}s)", sim)
+            if sim["status"] != "failed" or n == len(candidates[:3]) - 1:
+                break
 
-        decision = safety.decide(proposal, kill_switch=STATE["kill_switch"])
+        human_approval = safety.policy["rules"].get("human_approval", False)
+        decision = safety.decide(proposal, kill_switch=STATE["kill_switch"],
+                                 always_ask=human_approval and STATE["approval_mode"] == "always")
         inc["decision"] = decision.model_dump(mode="json")
-        await step(inc, "policy", decision.verdict, "; ".join(decision.reasons), inc["decision"])
+        shown = "ALLOW (reversible)" if decision.verdict == "APPROVAL_REQUIRED" and not human_approval else decision.verdict
+        inc["decision"]["shown_verdict"] = shown
+        await step(inc, "policy", shown, "; ".join(decision.reasons), inc["decision"])
 
         if decision.verdict == "BLOCK":
             inc["status"] = "escalated"
             await step(inc, "escalated", "done", "Action blocked by policy. A human must take over.")
             return
 
+        if decision.verdict == "APPROVAL_REQUIRED" and not human_approval:
+            why = "; ".join(r for r in decision.reasons
+                            if "allowed by policy" not in r and not r.startswith("rehearsed"))
+            decision = safety.approve(proposal, decision, "the agent: reversible fix, auto-undo armed")
+            decision.verdict = "ALLOW"  # proceed now; the grant is signed and auto-undo is armed
+            inc["decision"] = decision.model_dump(mode="json")
+            inc["decision"]["shown_verdict"] = "ALLOW (reversible)"
+            await step(inc, "proceeding", "reversible",
+                       f"Not fully proven ({why}), but the fix is reversible: applying it with auto-undo armed. "
+                       "Engineer notified.")
+
         if decision.verdict == "APPROVAL_REQUIRED":
             inc["status"] = "awaiting_approval"
             fut = asyncio.get_running_loop().create_future()
             APPROVALS[proposal.action_id] = fut
-            timeout = safety.policy["rules"]["approval_timeout_seconds"]
-            await step(inc, "awaiting_approval", "running", f"Waiting up to {timeout}s for a human. No answer means no.")
+            rules = safety.policy["rules"]
+            # In "ask, then auto" mode a fix may go ahead without an answer, but ONLY if the policy would
+            # have allowed it on its own (rehearsal passed, confident, reversible, not a protected target).
+            auto_ok = (STATE["approval_mode"] == "timed"
+                       and safety.decide(proposal, kill_switch=STATE["kill_switch"]).verdict == "ALLOW")
+            timeout = rules.get("auto_approve_after_seconds", 20) if auto_ok else rules["approval_timeout_seconds"]
+            inc["approval_deadline"] = time.time() + timeout
+            inc["auto_on_timeout"] = auto_ok
+            if auto_ok:
+                msg = (f"Waiting {timeout}s for a human. If nobody answers, it goes ahead automatically: "
+                       "the rehearsal passed and the fix is low-risk.")
+            else:
+                msg = f"Waiting up to {timeout}s for a human. No answer means no."
+            await step(inc, "awaiting_approval", "running", msg)
             try:
                 approved, who = await asyncio.wait_for(fut, timeout=timeout)
             except asyncio.TimeoutError:
-                approved, who = False, "timeout"
+                approved = auto_ok
+                who = f"auto-approved: no answer in {timeout}s, rehearsal passed" if auto_ok else "timeout"
             finally:
                 APPROVALS.pop(proposal.action_id, None)
             if not approved:
@@ -236,7 +357,7 @@ async def handle_incident(event, snap):
                 return
             decision = safety.approve(proposal, decision, who)
             inc["decision"] = decision.model_dump(mode="json")
-            await step(inc, "approval", "approved", f"Approved by {who}")
+            await step(inc, "approval", "approved", (f"Approved by {who}" if not who.startswith("auto-approved") else who[0].upper() + who[1:]))
 
         inc["status"] = "executing"
         await step(inc, "executing", "running", f"{proposal.operation} {proposal.target}")
@@ -264,9 +385,21 @@ async def handle_incident(event, snap):
             await step(inc, "resolved", "done",
                        f"Recovered. Verified in {took}s. Time to recovery {inc['recovery_seconds']}s. "
                        f"Touched only: {proposal.target}.")
+            if proposal.parameters.get("service") == "payment":
+                fu = await asyncio.to_thread(money_follow_up, inc, proposal)
+                if fu:
+                    inc["follow_up"] = fu
+                    await step(inc, "follow_up", "human", fu["detail"], fu["counts"])
         else:
+            undo = (result or {}).get("undo")
+            if undo and safety.policy["rules"].get("auto_undo_on_failed_verification", True):
+                await step(inc, "auto_undo", "running", f"The fix did not hold after {took}s: reversing it ({undo['describe']})")
+                r = await asyncio.to_thread(run_undo, inc, undo, "auto")
+                await step(inc, "auto_undo", "done" if r["ok"] else "failed", r["detail"])
+                inc["undone"] = r["ok"]
             inc["status"] = "escalated"
-            await step(inc, "escalated", "done", f"Not recovered after {took}s. Waking a human.")
+            await step(inc, "escalated", "done", f"Not recovered after {took}s. The system was left as the agent found it. "
+                                                 "Waking a human.")
     except Exception as e:
         inc["status"] = "error"
         await step(inc, "error", "failed", f"Agent error: {e}")
@@ -290,6 +423,7 @@ async def watch_loop():
         try:
             snap = await asyncio.to_thread(monitor.snapshot)
             STATE["services"], STATE["probe"] = snap["services"], snap["probe"]
+            STATE["consistency"] = snap.get("consistency")
             if not monitor.is_healthy(snap):
                 STATE["last_unhealthy_at"] = time.time()
             STATE["deploy_window"] = changes.in_deploy_window()
@@ -351,6 +485,36 @@ async def deny(action_id: str, approver: str = "dashboard-user"):
         return {"ok": False, "detail": "nothing waiting for approval with that id"}
     fut.set_result((False, approver))
     return {"ok": True}
+
+
+@app.post("/undo/{incident_id}")
+async def undo_incident(incident_id: str):
+    """Engineer clicked Undo: put back exactly what was there before the agent's fix."""
+    inc = next((h for h in STATE["history"] if h["id"] == incident_id), None)
+    if not inc or not (inc.get("result") or {}).get("undo"):
+        return {"ok": False, "detail": "nothing to undo for this incident"}
+    if inc.get("undone"):
+        return {"ok": False, "detail": "already undone"}
+    r = await asyncio.to_thread(run_undo, inc, inc["result"]["undo"], "engineer (dashboard)")
+    if r["ok"]:
+        inc["undone"] = True
+        changes_note = {"time": now_str(), "stage": "undo", "status": "done", "detail": r["detail"], "data": None}
+        inc["steps"].append(changes_note)
+        STATE["quiet_until"] = time.time() + 30  # the undo re-creates the original problem on purpose
+        save_history()
+    await broadcast()
+    return r
+
+
+@app.post("/approval-mode/{mode}")
+async def approval_mode(mode: str):
+    if mode not in ("always", "timed", "auto"):
+        return {"ok": False, "detail": "mode must be 'always', 'timed' or 'auto'"}
+    STATE["approval_mode"] = mode
+    save_settings()
+    audit("approval_mode", {"mode": mode})
+    await broadcast()
+    return {"ok": True, "approval_mode": mode}
 
 
 @app.post("/kill-switch/{on}")

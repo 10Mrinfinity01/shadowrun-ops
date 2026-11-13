@@ -21,6 +21,10 @@ services:
     volumes:
       - shadowdata:/var/lib/postgresql/data
 
+  redis:                       # session store used by the storefront
+    image: redis:7
+    container_name: shadow-redis
+
   cart:
     <<: *service
     container_name: shadow-cart
@@ -42,8 +46,9 @@ services:
     environment:
       CART_URL: http://cart:8000
       PAYMENT_URL: http://payment:8000
+      REDIS_HOST: redis
     ports: ["127.0.0.1:8090:8000"]
-    depends_on: [cart, payment]
+    depends_on: [cart, payment, redis]
 
 volumes:
   shadowdata:

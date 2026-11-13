@@ -11,6 +11,8 @@ class Monitor:
     def __init__(self):
         self._docker = None
         self.bad_streak = 0
+        self.started = time.time()
+        self._last_consistency = None
 
     # ---- low-level readers -------------------------------------------------------------------
     def _client(self):
@@ -63,6 +65,40 @@ class Monitor:
         except Exception as e:
             return False, f"unreachable: {str(e)[:120]}"
 
+    @staticmethod
+    def _timed_http(method, url, timeout=4):
+        import httpx
+        started = time.time()
+        try:
+            r = httpx.request(method, url, timeout=timeout)
+            ms = int((time.time() - started) * 1000)
+            return r.status_code < 400, f"HTTP {r.status_code}: {r.text[:160]}", ms
+        except Exception as e:
+            return False, f"unreachable: {str(e)[:120]}", int((time.time() - started) * 1000)
+
+    def consistency(self):
+        """Did any NEW payment-without-order or status mismatch appear since the last check?"""
+        import httpx
+        try:
+            r = httpx.get(config.CONSISTENCY_URL, params={"since": self.started}, timeout=3)
+            r.raise_for_status()
+            now = r.json()
+        except Exception as e:
+            return {"result": "unknown", "detail": f"consistency check unavailable: {str(e)[:80]}"}
+        prev = self._last_consistency or now
+        self._last_consistency = now
+        new_orphans = now["payments_without_order"] - prev["payments_without_order"]
+        new_mismatch = now["status_mismatch"] - prev["status_mismatch"]
+        if new_orphans > 0 or new_mismatch > 0:
+            parts = []
+            if new_orphans > 0:
+                parts.append(f"{new_orphans} new payment(s) taken with NO order")
+            if new_mismatch > 0:
+                parts.append(f"{new_mismatch} new order(s) whose status doesn't match a captured payment")
+            return {"result": "failed", "detail": "; ".join(parts), "new_payments_without_order": new_orphans,
+                    "new_status_mismatch": new_mismatch, "totals": now}
+        return {"result": "ok", "detail": "every captured payment has an order marked paid", "totals": now}
+
     # ---- one look at the whole system --------------------------------------------------------
     def snapshot(self):
         states = self.container_states()
@@ -85,9 +121,14 @@ class Monitor:
             services[name] = {"container": svc["container"], "container_status": status,
                               "oom_killed": cs["oom_killed"], "exit_code": cs["exit_code"],
                               "health": health, "detail": detail}
-        probe_ok, probe_detail = self._http("POST", config.CUSTOMER_PROBE_URL)
+        probe_ok, probe_detail, ms = self._timed_http("POST", config.CUSTOMER_PROBE_URL)
+        slow = probe_ok and ms > config.PROBE_SLOW_MS
+        if slow:
+            probe_detail = f"too slow: checkout took {ms} ms (limit {config.PROBE_SLOW_MS} ms)"
         return {"time": time.time(), "services": services,
-                "probe": {"result": "ok" if probe_ok else "failed", "detail": probe_detail}}
+                "probe": {"result": "ok" if probe_ok and not slow else "failed", "detail": probe_detail,
+                          "latency_ms": ms, "slow": slow},
+                "consistency": self.consistency()}
 
     @staticmethod
     def bad_services(snap):
@@ -96,7 +137,8 @@ class Monitor:
     @staticmethod
     def is_healthy(snap, services=None):
         names = services or list(snap["services"])
-        return all(snap["services"][n]["health"] == "ok" for n in names) and snap["probe"]["result"] == "ok"
+        return (all(snap["services"].get(n, {}).get("health") == "ok" for n in names) and snap["probe"]["result"] == "ok"
+                and snap.get("consistency", {}).get("result") != "failed")
 
     @staticmethod
     def signals(snap):
@@ -109,6 +151,10 @@ class Monitor:
                               result="ok" if s["health"] == "ok" else "failed", detail=s["detail"]))
         out.append(Signal(type="customer_probe", target="checkout",
                           result=snap["probe"]["result"], detail=snap["probe"]["detail"]))
+        cons = snap.get("consistency", {})
+        if cons.get("result") in ("ok", "failed"):
+            out.append(Signal(type="consistency_check", target="payment", result=cons["result"],
+                              detail=cons.get("detail", "")))
         return out
 
     def check_for_incident(self, snap, in_deploy_window=False):
@@ -118,7 +164,8 @@ class Monitor:
             self.bad_streak = 0
             return None
         bad = self.bad_services(snap)
-        if not bad and snap["probe"]["result"] == "ok":
+        cons_failed = snap.get("consistency", {}).get("result") == "failed"
+        if not bad and snap["probe"]["result"] == "ok" and not cons_failed:
             self.bad_streak = 0
             return None
         self.bad_streak += 1
@@ -130,6 +177,6 @@ class Monitor:
             incident_id="SR-" + uuid.uuid4().hex[:6].upper(),
             detected_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             severity=severity,
-            affected_services=bad or ["checkout"],
+            affected_services=(bad + (["payment"] if cons_failed and "payment" not in bad else [])) or ["checkout"],
             signals=[s for s in self.signals(snap) if s.result == "failed"],
         )

@@ -15,7 +15,7 @@ import time
 
 from agent import changes
 
-TWIN = {"demo-db": "shadow-db", "shop-cart": "shadow-cart",
+TWIN = {"demo-db": "shadow-db", "shop-cart": "shadow-cart", "shop-redis": "shadow-redis",
         "shop-payment": "shadow-payment", "shop-storefront": "shadow-storefront"}
 SHADOW_CONTAINERS = list(TWIN.values())
 SHADOW_PROBE = "http://localhost:8090/api/probe"
@@ -41,20 +41,49 @@ class ShadowRuntime:
         (self._dir() / f"{service}.{kind}.json").write_text(json.dumps(value, indent=2))
 
 
+SHADOW_CONSISTENCY = "http://localhost:9082/internal/consistency"
+
+
+class ShadowProbe:
+    """Same checks as live monitoring, on the copy: checkout works, is fast enough, and money matches orders."""
+
+    def __init__(self):
+        self.started = time.time()
+        self.last = None
+
+    def __call__(self):
+        import httpx
+        from agent import config
+        t0 = time.time()
+        try:
+            r = httpx.post(SHADOW_PROBE, timeout=4)
+            ms = int((time.time() - t0) * 1000)
+            if r.status_code >= 400:
+                return False, f"HTTP {r.status_code}"
+            if ms > config.PROBE_SLOW_MS:
+                return False, f"too slow: {ms} ms"
+        except Exception as e:
+            return False, f"unreachable: {str(e)[:80]}"
+        try:
+            now = httpx.get(SHADOW_CONSISTENCY, params={"since": self.started}, timeout=3).json()
+            prev, self.last = self.last or now, now
+            if (now["payments_without_order"] > prev["payments_without_order"]
+                    or now["status_mismatch"] > prev["status_mismatch"]):
+                return False, "HTTP 200 but payment/order consistency check failed"
+        except Exception:
+            pass
+        return True, f"HTTP 200 in {ms} ms"
+
+
 def default_probe():
-    import httpx
-    try:
-        r = httpx.post(SHADOW_PROBE, timeout=3)
-        return r.status_code < 400, f"HTTP {r.status_code}"
-    except Exception as e:
-        return False, f"unreachable: {str(e)[:80]}"
+    return ShadowProbe()()
 
 
 class ShadowSimulator:
-    def __init__(self, docker_url=None, probe=default_probe, runtime=None, sleep=time.sleep,
+    def __init__(self, docker_url=None, probe=None, runtime=None, sleep=time.sleep,
                  reproduce_timeout_s=12, verify_timeout_s=25, interval_s=1.0):
         self.docker_url = docker_url
-        self.probe = probe
+        self.probe = probe or ShadowProbe()
         self.runtime = runtime or ShadowRuntime()
         self.sleep = sleep
         self.reproduce_timeout_s = reproduce_timeout_s

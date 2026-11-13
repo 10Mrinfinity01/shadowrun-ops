@@ -6,7 +6,8 @@
           "enum": [
             "health_check",
             "container_state",
-            "customer_probe"
+            "customer_probe",
+            "consistency_check"
           ],
           "title": "Type",
           "type": "string"

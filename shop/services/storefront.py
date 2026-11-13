@@ -1,13 +1,33 @@
 import os
+import secrets
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from common import log
 
 CART = os.getenv("CART_URL", "http://cart:8000")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+_redis = None
+
+
+def sessions():
+    """Session store (Redis). Every customer request records the session; no store, no shop."""
+    global _redis
+    if _redis is None:
+        import redis
+        _redis = redis.Redis(host=REDIS_HOST, port=6379, socket_timeout=1, socket_connect_timeout=1)
+    return _redis
+
+
+def touch_session(user_id):
+    try:
+        sessions().setex(f"session:{user_id}", 1800, "active")
+    except Exception as e:
+        log("ERROR", f"session store unavailable host={REDIS_HOST}:6379 reason={str(e)[:120]}")
+        raise HTTPException(503, "session store unavailable")
 PAYMENT = os.getenv("PAYMENT_URL", "http://payment:8000")
 app = FastAPI(title="storefront")
 
@@ -16,6 +36,23 @@ class Add(BaseModel):
     user_id: str = "guest"
     product_id: int
     qty: int = 1
+
+
+class SetQty(BaseModel):
+    user_id: str = "guest"
+    product_id: int
+    qty: int
+
+
+class Register(BaseModel):
+    name: str
+    phone: str
+    password: str
+
+
+class Login(BaseModel):
+    phone: str
+    password: str
 
 
 def call(method, url, **kw):
@@ -44,16 +81,82 @@ def health():
             deps[name] = httpx.get(f"{url}/health", timeout=0.8).status_code
         except Exception:
             deps[name] = "unreachable"
+    try:
+        sessions().ping()
+        deps["redis"] = "ok"
+    except Exception as e:
+        log("ERROR", f"session store unavailable host={REDIS_HOST}:6379 reason={str(e)[:120]}")
+        return JSONResponse({"service": "storefront", "status": "fail", "dependencies": deps,
+                             "checks": {"redis": "unreachable"}}, status_code=503)
     return {"service": "storefront", "status": "ok", "dependencies": deps}
 
 
+@app.get("/api/categories")
+def categories():
+    return call("GET", f"{CART}/categories")
+
+
 @app.get("/api/products")
-def products():
-    return call("GET", f"{CART}/products")
+def products(category: str = ""):
+    return call("GET", f"{CART}/products", params={"category": category} if category else None)
+
+
+@app.post("/api/cart/set")
+def set_qty(a: SetQty):
+    touch_session(a.user_id)
+    return call("POST", f"{CART}/cart/{a.user_id}/set", json={"product_id": a.product_id, "qty": a.qty})
+
+
+def _new_session(user):
+    token = secrets.token_urlsafe(24)
+    try:
+        sessions().setex(f"token:{token}", 7 * 24 * 3600, user["id"] + "|" + user["name"] + "|" + user["phone"])
+    except Exception as e:
+        log("ERROR", f"session store unavailable host={REDIS_HOST}:6379 reason={str(e)[:120]}")
+        raise HTTPException(503, "session store unavailable: please try again")
+    return {"token": token, "user": user}
+
+
+@app.post("/api/auth/register")
+def register(r: Register):
+    return _new_session(call("POST", f"{CART}/users/register", json=r.model_dump()))
+
+
+@app.post("/api/auth/login")
+def login(r: Login):
+    return _new_session(call("POST", f"{CART}/users/login", json=r.model_dump()))
+
+
+@app.get("/api/auth/me")
+def me(authorization: str = Header(default="")):
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(401, "not logged in")
+    try:
+        raw = sessions().get(f"token:{token}")
+    except Exception as e:
+        log("ERROR", f"session store unavailable host={REDIS_HOST}:6379 reason={str(e)[:120]}")
+        raise HTTPException(503, "session store unavailable")
+    if not raw:
+        raise HTTPException(401, "session expired: please log in again")
+    uid, name, phone = raw.decode().split("|", 2)
+    return {"id": uid, "name": name, "phone": phone}
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: str = Header(default="")):
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        if token:
+            sessions().delete(f"token:{token}")
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 @app.post("/api/cart/add")
 def add(a: Add):
+    touch_session(a.user_id)
     return call("POST", f"{CART}/cart/{a.user_id}/add", json={"product_id": a.product_id, "qty": a.qty})
 
 
@@ -69,12 +172,19 @@ def cart(user_id: str):
 
 @app.post("/api/checkout/{user_id}")
 def checkout(user_id: str):
+    touch_session(user_id)
     return call("POST", f"{PAYMENT}/pay", json={"user_id": user_id})
+
+
+@app.get("/api/orders/{user_id}")
+def order_history(user_id: str):
+    return call("GET", f"{PAYMENT}/orders/{user_id}")
 
 
 @app.post("/api/probe")
 def probe():
     """Synthetic customer journey used by Monitoring: add one item, then pay."""
+    touch_session("synthetic-probe")
     call("POST", f"{CART}/cart/synthetic-probe/add", json={"product_id": 1, "qty": 1})
     result = call("POST", f"{PAYMENT}/pay", json={"user_id": "synthetic-probe"})
     return {"ok": True, "order_id": result["order_id"]}

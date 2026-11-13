@@ -30,6 +30,11 @@ EXPECTED = {
     "broken_config": {"bad_config:payment"},
     "memory_leak": {"oom_killed:cart", "container_down:cart"},
     "poisoned_log": {"container_down:database"},
+    "payment_timeout": {"bad_config:payment"},
+    "paid_no_order": {"bad_deploy:payment"},
+    "status_mismatch": {"bad_deploy:payment"},
+    "redis_down": {"container_down:redis"},
+    "api_slow": {"bad_deploy:cart"},
 }
 COOLDOWN_S = 65
 
@@ -160,9 +165,24 @@ def main():
     a = ap.parse_args()
     names = [n.strip() for n in a.scenarios.split(",") if n.strip() in EXPECTED]
     try:
-        state()
+        mode_before = state().get("approval_mode", "always")
     except Exception:
         sys.exit("The agent is not answering on http://localhost:8000. Start it first.")
+    set_mode("auto")  # unattended runs: approve automatically when the rehearsal passed and confidence is high
+    try:
+        run_all(a, names)
+    finally:
+        set_mode(mode_before)
+
+
+def set_mode(mode):
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"{AGENT}/approval-mode/{mode}", method="POST"), timeout=5)
+    except Exception:
+        pass
+
+
+def run_all(a, names):
 
     rows = []
     for i in range(1, a.runs + 1):

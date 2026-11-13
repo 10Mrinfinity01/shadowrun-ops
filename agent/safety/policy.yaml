@@ -5,14 +5,16 @@ version: 1
 
 allowed_actions:
   start_container:
-    targets: [demo-db, shop-cart, shop-payment, shop-storefront]
+    targets: [demo-db, shop-cart, shop-payment, shop-storefront, shop-redis]
   restart_container:
-    targets: [shop-cart, shop-payment, shop-storefront, demo-db]
+    targets: [shop-cart, shop-payment, shop-storefront, demo-db, shop-redis]
     approval_targets: [demo-db]   # restarting the database interrupts everyone: ask a human
   rollback_release:               # put back the last known-good release, then restart
     targets: [shop-cart, shop-payment, shop-storefront]
   restore_config:                 # put back the last known-good config, then restart
     targets: [shop-cart, shop-payment, shop-storefront]
+  undo:                           # reverse one of the agent's OWN fixes, back to the snapshot taken before it
+    targets: [demo-db, shop-cart, shop-payment, shop-storefront, shop-redis]
 
 # Never allowed, whatever the AI says.
 denied_actions:
@@ -27,9 +29,14 @@ denied_actions:
 protected_targets: [docker-proxy-read, docker-proxy-exec]
 
 rules:
-  min_confidence_for_auto: 0.7      # below this, a human must approve
+  human_approval: false             # false: no approval waits. Fixes that are not fully proven are still applied
+                                    # (they are reversible and auto-undo is armed). true: a human approves them
+  min_confidence_for_auto: 0.7      # below this, the fix is not proven safe
   max_attempts_per_incident: 2
-  cooldown_seconds_per_target: 60   # no repeated restarts of the same thing
+  cooldown_seconds_per_target: 0    # 0 = the agent always fixes; repeats are handled by the recurrence rule
+  recurrence_threshold: 3           # the same root cause this many times...
+  recurrence_window_seconds: 600    # ...within this window -> REVERSE: roll back the latest change to known-good
   grant_ttl_seconds: 60             # a signed permission expires quickly
-  approval_timeout_seconds: 120     # no answer means no
+  approval_timeout_seconds: 120     # only used when human_approval is true: no answer means no
+  auto_undo_on_failed_verification: true   # a fix that doesn't hold on the real shop is reversed automatically
   require_simulation: true          # fix must work in the shadow copy first (failed -> BLOCK, can't reproduce -> ask a human)

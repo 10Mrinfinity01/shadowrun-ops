@@ -66,7 +66,7 @@ class SafetyEngine:
         return PolicyDecision(decision_id="DEC-" + uuid.uuid4().hex[:6].upper(), action_id=proposal.action_id,
                               verdict=verdict, reasons=reasons, grant=grant)
 
-    def decide(self, proposal, kill_switch=False, now=None):
+    def decide(self, proposal, kill_switch=False, always_ask=False, now=None):
         now = now or time.time()
         p, rules = self.policy, self.policy["rules"]
         if kill_switch:
@@ -85,7 +85,7 @@ class SafetyEngine:
         if self.attempts.get(proposal.incident_id, 0) >= rules["max_attempts_per_incident"]:
             return self._make(proposal, "BLOCK", ["maximum fix attempts for this incident reached: wake a human"], now)
         last = self.last_action_at.get(proposal.target)
-        if last and now - last < rules["cooldown_seconds_per_target"]:
+        if last and rules.get("cooldown_seconds_per_target", 0) and now - last < rules["cooldown_seconds_per_target"]:
             wait = int(rules["cooldown_seconds_per_target"] - (now - last))
             return self._make(proposal, "BLOCK", [f"cooldown: {proposal.target} was changed recently, wait {wait}s"], now)
         sim = proposal.parameters.get("simulation") or {}
@@ -110,6 +110,8 @@ class SafetyEngine:
                                f"{rules['min_confidence_for_auto']}")
         if not proposal.reversible:
             needs_human.append("action is not reversible")
+        if always_ask:
+            needs_human.append("approval mode is 'always ask': an engineer authorises every fix")
         if needs_human:
             return self._make(proposal, "APPROVAL_REQUIRED", reasons + needs_human, now)
         return self._make(proposal, "ALLOW", reasons + ["confidence is high and the action is reversible"], now)

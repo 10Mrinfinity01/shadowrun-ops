@@ -32,6 +32,9 @@ def rank_hypotheses(snap, ctx=None):
     services = snap["services"]
     bad = {n for n, s in services.items() if s["health"] != "ok"}
     probe_failed = snap["probe"]["result"] == "failed"
+    probe_slow = bool(snap["probe"].get("slow"))
+    cons = snap.get("consistency", {})
+    cons_failed = cons.get("result") == "failed"
     hyps = []
 
     for name in bad:
@@ -73,15 +76,19 @@ def rank_hypotheses(snap, ctx=None):
         errors = ctx.errors_since(container, c["time"])
         if errors:
             score += 0.25
-            supporting.append(f"{errors} error line(s) in {container} logs since that change")
+            supporting.append(f"{errors} error/warning line(s) in {container} logs since that change")
         else:
-            contradicting.append(f"no errors logged by {container} since that change")
+            contradicting.append(f"no errors or warnings logged by {container} since that change")
+        if cons_failed and name == "payment":
+            score += 0.3
+            supporting.append(f"payment/order consistency check failing since the change: {cons.get('detail')}")
         if name in bad:
             score += 0.1
             supporting.append(f"{name} has been failing its health check since the change")
         if probe_failed:
             score += 0.1
-            supporting.append("customer checkout is failing")
+            supporting.append("customer checkout is " + ("too slow: " + snap["probe"]["detail"] if probe_slow
+                                                         else "failing"))
         failing_deps = [d for d in config.DEPENDS_ON[name] if d in bad]
         if failing_deps:
             score -= 0.3
@@ -140,6 +147,7 @@ def investigate(incident, snap, ctx, ask_llm=None):
             "incident": incident.model_dump(mode="json"),
             "services": snap["services"],
             "customer_probe": snap["probe"],
+            "payment_order_consistency": snap.get("consistency", {}),
             "dependencies": config.DEPENDS_ON,
             "recent_changes": [{k: c[k] for k in ("id", "service", "kind", "before", "after", "actor")}
                                for c in ctx.recent_changes],
