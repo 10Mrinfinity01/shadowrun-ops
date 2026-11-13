@@ -119,12 +119,16 @@ def investigate(incident, snap, ctx, ask_llm=None):
         ctx = Context(read_logs=ctx)
     hyps = rank_hypotheses(snap, ctx)
 
-    to_read = [n for n in incident.affected_services if n in config.SERVICES]
-    to_read += [c["service"] for c in ctx.recent_changes if c["service"] not in to_read]
+    # Root-cause candidates first, then other affected services; at most 3, so the request stays small
+    # (Groq's free tier allows about 8K tokens per minute).
+    to_read = [h.service for h in hyps if h.service in config.SERVICES]
+    to_read += [n for n in incident.affected_services if n in config.SERVICES]
+    to_read += [c["service"] for c in ctx.recent_changes]
+    to_read = list(dict.fromkeys(to_read))[:3]
     log_blocks, suspicious = [], []
     for name in to_read:
         container = config.SERVICES[name]["container"]
-        wrapped, sus = sanitize_logs(ctx.read_logs(container)[-30:], container)
+        wrapped, sus = sanitize_logs(ctx.read_logs(container)[-12:], container)
         log_blocks.append(wrapped)
         suspicious.extend(sus)
 
@@ -144,16 +148,18 @@ def investigate(incident, snap, ctx, ask_llm=None):
 
     if ask_llm is not None:
         evidence = {
-            "incident": incident.model_dump(mode="json"),
-            "services": snap["services"],
-            "customer_probe": snap["probe"],
+            "affected": incident.affected_services,
+            "services": {n: {"container": v["container"], "status": v["container_status"], "health": v["health"],
+                             "detail": v["detail"][:120]} for n, v in snap["services"].items()},
+            "customer_probe": {k: snap["probe"].get(k) for k in ("result", "detail", "latency_ms")},
             "payment_order_consistency": snap.get("consistency", {}),
             "dependencies": config.DEPENDS_ON,
             "recent_changes": [{k: c[k] for k in ("id", "service", "kind", "before", "after", "actor")}
                                for c in ctx.recent_changes],
-            "candidates": [h.model_dump(mode="json") for h in hyps],
+            "candidates": [{"id": h.id, "score": h.score, "supporting": h.supporting[:3],
+                            "contradicting": h.contradicting[:2]} for h in hyps[:5]],
         }
-        user = json.dumps(evidence, indent=1) + "\n\nRecent logs:\n" + "\n".join(log_blocks)
+        user = json.dumps(evidence, separators=(",", ":")) + "\n\nRecent logs:\n" + "\n".join(log_blocks)
         reply, provider = ask_llm(SYSTEM_PROMPT, user)
         if reply and reply.get("root_cause_id") in {h.id for h in hyps}:
             agreed = reply["root_cause_id"] == top.id

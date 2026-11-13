@@ -19,7 +19,6 @@ SECRET_PATTERNS = [
 INJECTION_PATTERNS = [
     r"ignore (all |any )?(previous|prior|above) instructions",
     r"\b(system|developer) (prompt|instruction|message)\b",
-    r"\bSYSTEM\s*:",
     r"\bAI agent\b",
     r"\byou (must|should) now\b",
     r"\bdrop\s+(database|table)\b",
@@ -29,6 +28,8 @@ INJECTION_PATTERNS = [
     r"\bdisable (the )?(safety|policy|guard)",
 ]
 INJECTION_RE = re.compile("|".join(INJECTION_PATTERNS), re.I)
+# Upper-case only: real logs say "system: 0.00 s" (e.g. Postgres timing lines), attacks shout "SYSTEM:".
+SHOUTED_SYSTEM_RE = re.compile(r"\bSYSTEM\s*:")
 
 
 def redact(line):
@@ -41,8 +42,8 @@ def sanitize_logs(lines, source):
     """Returns (wrapped_text_for_llm, suspicious_lines)."""
     clean, suspicious = [], []
     for raw in lines:
-        line = redact(raw)[:300]
-        if INJECTION_RE.search(line):
+        line = redact(raw)[:220]
+        if INJECTION_RE.search(line) or SHOUTED_SYSTEM_RE.search(line):
             suspicious.append(f"[{source}] {line}")
             line = "[QUARANTINED: line contained instructions aimed at an AI; withheld]"
         clean.append(line)

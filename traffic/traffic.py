@@ -23,7 +23,7 @@ SHOP = "http://localhost:8080"
 FALLBACK_PRICES = {1: 24900, 2: 59900, 3: 19900, 4: 34900}
 
 
-def call(method, path, body=None, timeout=3):
+def call(method, path, body=None, timeout=6):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(SHOP + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"})

@@ -12,7 +12,7 @@ Scenarios:
   Advanced
     stop_db         the database container goes down (alias: db_down)
     redis_down      the Redis session store goes down
-    api_slow        cart release 2.6 adds a slow query: every cart call takes ~1.6 s
+    api_slow        cart release 2.6 adds a slow query: every cart call takes ~3.5 s
     bad_deploy      a developer ships payment release 2.3, which has a bug (goes through the normal deploy tool)
     broken_config   a developer changes payment's database port to a wrong value (normal deploy tool)
     memory_leak     a buggy report export fills cart's memory until the container is OOM-killed

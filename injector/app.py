@@ -31,7 +31,7 @@ CATEGORIES = [
     ("Advanced", [
         ("stop_db", "Database down", "The database container stops."),
         ("redis_down", "Redis down", "The Redis session store stops."),
-        ("api_slow", "API slowdown", "Cart 2.6 adds a slow query. Every cart call takes about 1.6 s."),
+        ("api_slow", "API slowdown", "Cart 2.6 adds a slow query. Every cart call takes about 3.5 s."),
         ("broken_config", "Broken configuration", "Payment is pointed at the wrong database port."),
         ("memory_leak", "Service crash (memory leak)", "A buggy report export fills cart's memory until it is killed."),
     ]),

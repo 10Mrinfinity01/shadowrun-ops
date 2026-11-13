@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { Comparison, ImpactBanner, Scoreboard, ServiceMap, rs } from './Phase3.jsx'
+import { Sidebar, SimpleIncident, SimpleServices, StatusHero, NAMES, plainCause, plainAction } from './Simple.jsx'
 
 // Laptop A: works with no settings. Laptop B: put VITE_BACKEND_URL=http://<Laptop A IP>:8000 in dashboard/.env.local
 const BACKEND = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:8000`
@@ -188,7 +189,9 @@ export default function App() {
   const rootService = inc?.diagnosis?.root_cause?.service
   const probe = state?.probe
   return (
-    <div className="page">
+    <div className="layout">
+      <Sidebar inc={inc} killSwitch={state?.kill_switch} live={!!state?.active} />
+      <div className="page">
       <nav className="appnav">
         <span className="muted">Apps:</span>
         <a href={`http://${window.location.hostname}:3000`} target="_blank" rel="noreferrer">🛒 QuickCart (customer shop)</a>
@@ -197,80 +200,75 @@ export default function App() {
       </nav>
       <header className="row">
         <h1>ShadowRun-Ops</h1>
-        <span className="muted">Practice first. Then real.</span>
+        <span className="muted">The AI on-call engineer · practice first, then real</span>
         <span className={`pill ${connected ? 'v-ALLOW' : 'v-BLOCK'}`}>{connected ? 'agent connected' : 'agent offline'}</span>
-        {state?.deploy_window && <span className="pill v-running">deploy in progress: monitoring paused</span>}
-        {state?.shadow?.available === true && <span className="pill v-skipped">shadow copy ready</span>}
         {state?.shadow?.available === false && <span className="pill v-BLOCK">shadow copy offline</span>}
-        <span className="pill v-ALLOW" title="The agent only acts on fixes it has proven safe on the shadow copy, and every action can be undone">every action reversible · undo available</span>
         <button
           className={state?.kill_switch ? 'deny' : ''}
           onClick={() => post(`/kill-switch/${!state?.kill_switch}`)}
-          title="When ON, the agent may observe but never act">
-          Kill switch: {state?.kill_switch ? 'ON' : 'off'}
+          title="When ON, the AI may observe but never act">
+          Kill switch: {state?.kill_switch ? 'ON (AI paused)' : 'off'}
         </button>
       </header>
 
+      <StatusHero state={state} connected={connected} inc={inc} />
       <ImpactBanner state={state} />
 
-      <ServiceMap state={state} />
+      <div id="map"><ServiceMap state={state} /></div>
 
-      <section className="grid">
-        {ORDER.map((n) => (
-          <ServiceCard key={n} name={n} s={state?.services?.[n]}
-            rootCause={state?.active && rootService === n} />
-        ))}
-        <div className={`card service ${probe?.result === 'ok' ? 'ok' : 'bad'}`}>
-          <strong>customer checkout</strong>
-          <div className="muted">synthetic probe{probe?.latency_ms != null ? ` · ${probe.latency_ms} ms` : ''}</div>
-          <div className="detail">{probe?.detail ?? 'waiting for data'}</div>
-        </div>
-        <div className={`card service ${state?.consistency?.result === 'failed' ? 'bad' : state?.consistency?.result === 'ok' ? 'ok' : ''}`}>
-          <strong>payment ↔ order check</strong>
-          <div className="muted">money taken = orders paid</div>
-          <div className="detail">{state?.consistency?.detail ?? 'waiting for data'}</div>
-        </div>
+      <SimpleServices state={state} rootService={rootService} />
+
+      <section id="incident">
+        {inc ? <SimpleIncident inc={inc} post={post} /> : <div className="card muted">No incidents yet. All quiet.</div>}
       </section>
 
-      {inc ? (
-        <section className="two-col">
-          <OneMinuteCard inc={inc} />
-          <div className="card"><h3>Timeline</h3><Timeline steps={inc.steps} /></div>
-        </section>
-      ) : (
-        <p className="muted">No incidents yet. All quiet.</p>
-      )}
+      <div id="results"><Scoreboard backend={BACKEND} /></div>
 
-      <Comparison state={state} post={post} />
-
-      <section className="two-col">
-        <div className="card"><h3>Recent changes (ledger)</h3><Changes items={state?.changes} /></div>
-        <div className="card"><h3>Security events</h3><SecurityEvents items={state?.security_events} /></div>
+      <section id="more">
+        <h2 className="more-title">More details (for engineers)</h2>
+        {inc && (
+          <details className="fold">
+            <summary>Technical details of {inc.id}: evidence, safety decision, full timeline</summary>
+            <section className="two-col">
+              <OneMinuteCard inc={inc} />
+              <div className="card"><h3>Timeline</h3><Timeline steps={inc.steps} /></div>
+            </section>
+          </details>
+        )}
+        <details className="fold">
+          <summary>Security: careless agent vs ShadowRun-Ops, attacks blocked ({state?.security_events?.length || 0})</summary>
+          <Comparison state={state} post={post} />
+          <div className="card"><h3>Security events</h3><SecurityEvents items={state?.security_events} /></div>
+        </details>
+        <details className="fold">
+          <summary>Change history: who deployed what ({state?.changes?.length || 0} recent)</summary>
+          <div className="card"><Changes items={state?.changes} /></div>
+        </details>
+        {state?.history?.length > 0 && (
+          <details className="fold">
+            <summary>All incidents ({state.history.length})</summary>
+            <section className="card">
+              <table>
+                <thead><tr><th>Incident</th><th>Cause</th><th>What the AI did</th><th>Practice run</th><th>Result</th><th>Time</th><th>Lost</th></tr></thead>
+                <tbody>
+                  {state.history.map((h) => (
+                    <tr key={h.id}>
+                      <td>{h.id}</td>
+                      <td>{h.diagnosis?.root_cause ? plainCause(h.diagnosis.root_cause) : '—'}</td>
+                      <td>{h.proposal ? plainAction(h.proposal) : '—'}</td>
+                      <td>{h.simulation?.status?.replace('_', ' ') ?? '—'}</td>
+                      <td>{h.status.replace('_', ' ')}</td>
+                      <td>{h.recovery_seconds != null ? `${h.recovery_seconds}s` : '—'}</td>
+                      <td>{h.impact ? rs(h.impact.lost_paise) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          </details>
+        )}
       </section>
-
-      <Scoreboard backend={BACKEND} />
-
-      {state?.history?.length > 0 && (
-        <section className="card">
-          <h3>History</h3>
-          <table>
-            <thead><tr><th>Incident</th><th>Root cause</th><th>Action</th><th>Practice run</th><th>Status</th><th>Recovery</th><th>Lost</th></tr></thead>
-            <tbody>
-              {state.history.map((h) => (
-                <tr key={h.id}>
-                  <td>{h.id}</td>
-                  <td>{h.diagnosis?.root_cause?.id ?? '—'}</td>
-                  <td>{h.proposal ? `${h.proposal.operation} ${h.proposal.target}` : '—'}</td>
-                  <td>{h.simulation?.status?.replace('_', ' ') ?? '—'}</td>
-                  <td>{h.status}</td>
-                  <td>{h.recovery_seconds != null ? `${h.recovery_seconds}s` : '—'}</td>
-                  <td>{h.impact ? rs(h.impact.lost_paise) : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
+      </div>
     </div>
   )
 }

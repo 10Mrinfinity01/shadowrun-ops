@@ -31,7 +31,7 @@ DOCKER_READ_URL = os.getenv("DOCKER_READ_URL", "tcp://127.0.0.1:2375")
 DOCKER_EXEC_URL = os.getenv("DOCKER_EXEC_URL", "tcp://127.0.0.1:2376")
 GRANT_SECRET = os.getenv("GRANT_SECRET", "")
 
-PROBE_SLOW_MS = 1200          # a customer checkout slower than this counts as failing (too slow to use)
+PROBE_SLOW_MS = 3000          # a customer checkout slower than this counts as failing (too slow to use)
 POLL_SECONDS = 3
 BAD_POLLS_BEFORE_INCIDENT = 2
 QUIET_SECONDS_AFTER_INCIDENT = 15

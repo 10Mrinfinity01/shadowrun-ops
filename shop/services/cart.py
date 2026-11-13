@@ -47,7 +47,7 @@ def slow_query_bug(endpoint):
     """BUG in release 2.6: a new 'recommended items' query scans the whole table on every cart call."""
     if VERSION == "2.6":
         started = time.time()
-        time.sleep(1.6)
+        time.sleep(3.5)
         log("WARN", f"slow query {endpoint}: {int((time.time() - started) * 1000)} ms "
                     "(release 2.6 recommendations query, full table scan on cart_items)")
 

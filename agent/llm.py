@@ -47,9 +47,12 @@ def chat_json(system, user, max_tokens=1500, timeout=8, prefer=None):
         extra = {}
         if name == "groq" and "gpt-oss" in model:
             extra["reasoning_effort"] = "low"  # faster, and saves Groq's tokens-per-minute budget
+        if name == "gemini":
+            extra["reasoning_effort"] = "low"  # otherwise the thinking can use up the whole reply budget
         try:
             started = time.time()
-            client = OpenAI(base_url=cfg["base_url"], api_key=key, timeout=timeout, max_retries=0)
+            client = OpenAI(base_url=cfg["base_url"], api_key=key, max_retries=0,
+                            timeout=max(timeout, 25) if name == "ollama" else timeout)  # local model: slower
             r = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],

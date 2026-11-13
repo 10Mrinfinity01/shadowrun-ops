@@ -56,7 +56,7 @@ class ShadowProbe:
         from agent import config
         t0 = time.time()
         try:
-            r = httpx.post(SHADOW_PROBE, timeout=4)
+            r = httpx.post(SHADOW_PROBE, timeout=7)
             ms = int((time.time() - t0) * 1000)
             if r.status_code >= 400:
                 return False, f"HTTP {r.status_code}"

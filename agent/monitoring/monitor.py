@@ -66,7 +66,7 @@ class Monitor:
             return False, f"unreachable: {str(e)[:120]}"
 
     @staticmethod
-    def _timed_http(method, url, timeout=4):
+    def _timed_http(method, url, timeout=7):
         import httpx
         started = time.time()
         try:

@@ -50,7 +50,7 @@ $envText = if (Test-Path .env) { Get-Content .env -Raw } else { "" }
 Check "GRANT_SECRET set in .env" ($envText -match "GRANT_SECRET=\S{16,}") "add a long random GRANT_SECRET to .env"
 Check "Policy threshold is 0.7" ((Get-Content agent\safety\policy.yaml -Raw) -match "min_confidence_for_auto: 0\.7\s") "run demo_reset.ps1"
 
-$tests = & .\venv\Scripts\python.exe -m unittest tests.test_phase1 tests.test_phase2 tests.test_phase2b tests.test_phase3 tests.test_phase5 tests.test_phase6 tests.test_phase7 2>&1 | Out-String
+$tests = & .\venv\Scripts\python.exe -m unittest tests.test_phase1 tests.test_phase2 tests.test_phase2b tests.test_phase3 tests.test_phase5 tests.test_phase6 tests.test_phase7 tests.test_phase8 2>&1 | Out-String
 Check "All logic tests pass" ($tests -match "\nOK") "run the tests to see which one fails"
 
 Write-Host ""

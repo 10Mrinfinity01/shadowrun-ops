@@ -24,7 +24,7 @@ from agent.planner.planner import plan
 from agent import recurrence
 from agent.safety.engine import SafetyEngine
 from agent.shadow.simulator import ShadowSimulator
-from agent.verification.verifier import verify
+from agent.verification.verifier import judge_partial, verify
 
 AUDIT_FILE = changes.DATA / "audit.jsonl"
 HISTORY_FILE = changes.DATA / "history.json"
@@ -376,7 +376,7 @@ async def handle_incident(event, snap):
             STATE["services"], STATE["probe"] = s["services"], s["probe"]
             await broadcast()
 
-        ok, last, took = await verify(monitor, proposal.verify_services, on_progress=progress)
+        ok, last, took = await verify(monitor, proposal.verify_services, timeout_s=30, on_progress=progress)
         if last:
             STATE["services"], STATE["probe"] = last["services"], last["probe"]
         if ok:
@@ -390,6 +390,13 @@ async def handle_incident(event, snap):
                 if fu:
                     inc["follow_up"] = fu
                     await step(inc, "follow_up", "human", fu["detail"], fu["counts"])
+        elif judge_partial(last, proposal.parameters.get("service")) == "partial":
+            inc["status"] = "partially_resolved"
+            inc["partial"] = True
+            inc["recovery_seconds"] = round(time.time() - inc["started"], 1)
+            await step(inc, "partial", "done",
+                       f"{proposal.parameters.get('service')} is fixed, but customers are still affected: another "
+                       "problem remains. Keeping this fix and going after the next cause now.")
         else:
             undo = (result or {}).get("undo")
             if undo and safety.policy["rules"].get("auto_undo_on_failed_verification", True):
@@ -413,7 +420,7 @@ async def handle_incident(event, snap):
         STATE["history"] = STATE["history"][:20]
         save_history()
         STATE["active"] = None
-        STATE["quiet_until"] = time.time() + config.QUIET_SECONDS_AFTER_INCIDENT
+        STATE["quiet_until"] = time.time() + (3 if inc.get("partial") else config.QUIET_SECONDS_AFTER_INCIDENT)
         await broadcast()
 
 
